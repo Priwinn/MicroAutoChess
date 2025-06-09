@@ -9,6 +9,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from src.core.units import Unit, UnitType, UnitRarity, UnitStats
 from src.core.board import Board, HexBoard
 from src.core.combat import CombatEngine, CombatEvent, CombatAction
+import time
 
 
 class CombatVisualizer:
@@ -95,13 +96,14 @@ def create_mock_units():
     return team1_units, team2_units
 
 
-def setup_combat_scenario():
+def setup_combat_scenario(debug: bool = False):
     """Set up the combat scenario."""
-    print("Setting up Auto Chess Simultaneous Combat Mockup...")
-    print("=" * 60)
+    if debug:
+        print("Setting up Auto Chess Simultaneous Combat Mockup...")
+        print("=" * 60)
     
     # Create board
-    board = HexBoard(size=(8, 8))
+    board = HexBoard(size=(7, 8))
     
     # Create units
     team1_units, team2_units = create_mock_units()
@@ -114,84 +116,75 @@ def setup_combat_scenario():
 
     
     # Position Team 2 units (bottom side)
-    board.place_unit(team2_units[0], (4, 4))  # Warrior front
-    board.place_unit(team2_units[2], (5, 4))  # Tank front
-    board.place_unit(team2_units[3], (6, 5))  # Assassin second line
-    board.place_unit(team2_units[1], (7, 7))  # Archer back
+    board.place_unit(team2_units[0], (3, 4))  # Warrior front
+    board.place_unit(team2_units[2], (4, 4))  # Tank front
+    board.place_unit(team2_units[3], (5, 5))  # Assassin second line
+    board.place_unit(team2_units[1], (6, 7))  # Archer back
     
     return board, team1_units, team2_units
 
 
-def run_combat_demonstration():
+def run_combat_demonstration(debug: bool = False, combat_seed: int = 42):
     """Run the complete combat demonstration."""
     
     # Setup
-    board, team1_units, team2_units = setup_combat_scenario()
+    board, team1_units, team2_units = setup_combat_scenario(debug=debug)
     visualizer = CombatVisualizer(board)
     
     # Show initial setup
-    visualizer.print_board("Initial Setup")
-    print("Legend: Uppercase = Team 1, Lowercase = Team 2")
-    print("W/w = Warrior (Melee), A/a = Archer (Ranged)")
-    print("\nUnit Stats:")
-    print("- Warrior: High health, melee range (1), balanced damage")
-    print("- Archer: Lower health, ranged (3), good damage")
+    if debug:
+        visualizer.print_board("Initial Setup")
+        print("Legend: Uppercase = Team 1, Lowercase = Team 2")
+        print("W/w = Warrior (Melee), A/a = Archer (Ranged)")
+        print("\nUnit Stats:")
+        print("- Warrior: High health, melee range (1), balanced damage")
+        print("- Archer: Lower health, ranged (3), good damage")
+        
+        visualizer.print_unit_stats(team1_units, "Team 1")
+        visualizer.print_unit_stats(team2_units, "Team 2")
     
-    visualizer.print_unit_stats(team1_units, "Team 1")
-    visualizer.print_unit_stats(team2_units, "Team 2")
-    
-    input("\nPress Enter to start simultaneous combat...")
     
     # Create combat engine and simulate
-    combat_engine = CombatEngine(board, combat_seed=42)
-    
-    print("\n" + "=" * 60)
-    print("SIMULTANEOUS COMBAT BEGINS!")
-    print("=" * 60)
-    print("Each round, all units plan actions simultaneously:")
-    print("1. Plan phase: All units decide their actions")
-    print("2. Attack phase: All attacks resolve simultaneously") 
-    print("3. Move phase: All movements resolve simultaneously")
-    print("4. Cleanup: Remove defeated units")
-    print("-" * 60)
-    
+    combat_engine = CombatEngine(board, combat_seed=combat_seed)
+
     winner = combat_engine.simulate_combat(team1_units, team2_units)
-    
+
     # Show results
-    print("\n" + "=" * 60)
-    print("COMBAT COMPLETE!")
-    print("=" * 60)
-    
-    visualizer.print_board("Final Board State")
-    visualizer.print_unit_stats(team1_units, "Team 1 (Final)")
-    visualizer.print_unit_stats(team2_units, "Team 2 (Final)")
+    if debug:
+        print("\n" + "=" * 60)
+        print("COMBAT COMPLETE!")
+        print("=" * 60)
+        visualizer.print_board("Final Board State")
+        visualizer.print_unit_stats(team1_units, "Team 1 (Final)")
+        visualizer.print_unit_stats(team2_units, "Team 2 (Final)")
     
     # Combat summary
     summary = combat_engine.get_combat_summary()
-    print(f"\n🏆 Combat Results:")
-    print("-" * 30)
+    if debug:
+        print(f"\n🏆 Combat Results:")
+        print("-" * 30)
+        
+        if winner == 1:
+            print("🎉 TEAM 1 WINS!")
+        elif winner == 2:
+            print("🎉 TEAM 2 WINS!")
+        else:
+            print("🤝 DRAW!")
+        
+        print(f"⏱️  Total Rounds: {summary['total_rounds']}")
+        print(f"📊 Total Events: {summary['total_events']}")
     
-    if winner == 1:
-        print("🎉 TEAM 1 WINS!")
-    elif winner == 2:
-        print("🎉 TEAM 2 WINS!")
-    else:
-        print("🤝 DRAW!")
-    
-    print(f"⏱️  Total Rounds: {summary['total_rounds']}")
-    print(f"📊 Total Events: {summary['total_events']}")
-    
-    # Analyze the combat
-    attack_count = sum(1 for e in summary['events'] if e.action == CombatAction.ATTACK)
-    move_count = sum(1 for e in summary['events'] if e.action == CombatAction.MOVE)
-    total_damage = sum(e.damage for e in summary['events'] if e.damage > 0)
-    
-    print(f"⚔️  Total Attacks: {attack_count}")
-    print(f"🏃 Total Moves: {move_count}")
-    print(f"💥 Total Damage: {total_damage}")
-    
-    # Show combat log
-    visualizer.print_combat_log(summary['events'])
+        # Analyze the combat
+        attack_count = sum(1 for e in summary['events'] if e.action == CombatAction.ATTACK)
+        move_count = sum(1 for e in summary['events'] if e.action == CombatAction.MOVE)
+        total_damage = sum(e.damage for e in summary['events'] if e.damage > 0)
+        
+        print(f"⚔️  Total Attacks: {attack_count}")
+        print(f"🏃 Total Moves: {move_count}")
+        print(f"💥 Total Damage: {total_damage}")
+        
+        # Show combat log
+        visualizer.print_combat_log(summary['events'])
     
     return winner, summary
 
@@ -212,7 +205,7 @@ def interactive_step_by_step():
     visualizer.print_unit_stats(team2_units, "Team 2")
     
     round_num = 0
-    max_rounds = 50
+    max_rounds = 500
     
     while round_num < max_rounds:
         round_num += 1
@@ -248,6 +241,8 @@ def interactive_step_by_step():
                     print(f"  ⚔️  {event.description}")
                 elif event.action == CombatAction.MOVE:
                     print(f"  🏃 {event.description}")
+                elif event.action == CombatAction.CAST_SPELL:
+                    print(f"  ✨ {event.description}")
                 elif "defeated" in event.description.lower():
                     print(f"  💀 {event.description}")
         
@@ -257,8 +252,51 @@ def interactive_step_by_step():
     
     print("\nInteractive demo completed!")
 
+def time_combat_demo(iterations: int = 100):
+    """Time the combat demonstration. Fixed seed for reproducibility."""
+    
+    times = []
+    for i in range(iterations):
+        iter_start = time.time()
+        run_combat_demonstration(debug=False)
+        iter_end = time.time()
+        times.append(iter_end - iter_start)
+    
+    total_time = sum(times)
+    avg_time = total_time / iterations
+    stddev_time = (sum((t - avg_time) ** 2 for t in times) / iterations) ** 0.5
+    
+    print(f"\nTiming Results:")
+    print(f"Total time for {iterations} combat demonstrations: {total_time:.2f} seconds")
+    print(f"Average time per demonstration: {avg_time:.4f} seconds")
+    print(f"Standard deviation: {stddev_time:.4f} seconds")
 
-if __name__ == "__main__":
+def time_combat_demo_with_winrates(iterations: int = 100):
+    """Time the combat demonstration. Changes the seed for each iteration and tracks win rates."""
+
+    times = []
+    winners = []
+    for i in range(iterations):
+        iter_start = time.time()
+        winner, _ = run_combat_demonstration(debug=False, combat_seed=i)
+        iter_end = time.time()
+        times.append(iter_end - iter_start)
+        winners.append(winner)
+
+
+    total_time = sum(times)
+    avg_time = total_time / iterations
+    stddev_time = (sum((t - avg_time) ** 2 for t in times) / iterations) ** 0.5
+    
+    print(f"\nTiming Results:")
+    print(f"Total time for {iterations} combat demonstrations: {total_time:.2f} seconds")
+    print(f"Average time per demonstration: {avg_time:.4f} seconds")
+    print(f"Standard deviation: {stddev_time:.4f} seconds")
+    print(f"Winner distribution: {winners.count(1)} Team 1, {winners.count(2)} Team 2, {winners.count(0)} Draw")
+    print(f"Win rates: Team 1: {winners.count(1)/iterations:.2%}, Team 2: {winners.count(2)/iterations:.2%}, Draw: {winners.count(0)/iterations:.2%}")
+
+def main(debug: bool = False):
+    """Main function to run the combat demonstration."""
     print("Auto Chess Simultaneous Combat Mockup")
     print("=" * 50)
     print()
@@ -271,8 +309,8 @@ if __name__ == "__main__":
     
     try:
         if choice in ['1', '3']:
-            run_combat_demonstration()
-        
+            run_combat_demonstration(debug=debug)
+
         if choice in ['2', '3']:
             if choice == '3':
                 input("\nPress Enter to start interactive demo...")
@@ -280,11 +318,22 @@ if __name__ == "__main__":
         
         if choice not in ['1', '2', '3']:
             print("Invalid choice, running automatic demo...")
-            run_combat_demonstration()
-            
+            run_combat_demonstration(debug=debug)
+
     except Exception as e:
         print(f"Error during combat demonstration: {e}")
         import traceback
         traceback.print_exc()
     
     print("\nDemo completed!")
+
+
+if __name__ == "__main__":
+    debug = True
+    main(debug=debug)
+
+    # Time the combat demonstration
+    # time_combat_demo(iterations=100)  # Adjust iterations for timing
+
+    # Time the combat demonstration with win rates
+    time_combat_demo_with_winrates(iterations=100)  # Adjust iterations for timing

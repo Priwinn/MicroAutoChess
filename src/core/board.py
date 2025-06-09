@@ -7,8 +7,14 @@ from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass
 from enum import Enum
 from queue import PriorityQueue
+# from src.numba_classes.numba_pq import NumbaPriorityQueue as PriorityQueue
+# from src.numba_classes.numba_pq import PriorityQueue as PriorityQueue
+from numba import njit
 
+# from src.numba_classes.numba_pq import PurePythonPriorityQueue as PriorityQueue
+# from src.numba_classes.numba_pq import PriorityQueue as PriorityQueue
 from src.core.units import Unit, UnitType
+
 
 
 class CellType(Enum):
@@ -28,10 +34,14 @@ class BoardCell:
     def is_empty(self) -> bool:
         return self.unit is None and self.cell_type == CellType.EMPTY
     
+    def is_planned(self) -> bool:
+        return self.cell_type == CellType.PLANNED
+    
+    
     def place_unit(self, unit: Unit):
         """Place a unit on this cell."""
-        if not self.is_empty():
-            raise ValueError(f"Cell {self.position} is not empty")
+        if not (self.is_empty() or self.is_planned()):
+            raise ValueError(f"Cell {self.position} is not empty or planned")
         self.unit = unit
         self.cell_type = CellType.UNIT
         unit.position = self.position
@@ -46,6 +56,12 @@ class BoardCell:
         else:
             raise ValueError(f"Tried to remove unit from cell {self.position}")
         return unit
+    
+    def set_planned(self):
+        """Set cell as planned for unit movement."""
+        if not self.is_empty():
+            raise ValueError(f"Cell {self.position} is not empty")
+        self.cell_type = CellType.PLANNED
 
 
 class Board:
@@ -54,7 +70,7 @@ class Board:
     Manages unit positions and combat mechanics.
     """
     
-    def __init__(self, size: Tuple[int, int] = (8, 8)):
+    def __init__(self, size: Tuple[int, int] = (7, 8)):
         self.size = size
         self.width, self.height = size
         self.cells: Dict[Tuple[int, int], BoardCell] = {}
@@ -64,10 +80,13 @@ class Board:
             for y in range(self.height):
                 self.cells[(x, y)] = BoardCell((x, y))
     
-    def get_cell(self, position: Tuple[int, int]) -> Optional[BoardCell]:
+    def get_cell(self, position: Tuple[int, int]) -> BoardCell:
         """Get cell at position."""
-        return self.cells.get(position)
-    
+        output = self.cells.get(position)
+        if output is None:
+            raise ValueError(f"Position {position} does not exist on the board")
+        return output
+
     def is_valid_position(self, position: Tuple[int, int]) -> bool:
         """Check if position is within board bounds."""
         x, y = position
@@ -117,11 +136,15 @@ class Board:
         """Get all units belonging to a specific team."""
         return [unit for unit in self.get_units() if getattr(unit, 'team', 0) == team]
     
-    def l1_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
+    @staticmethod
+    @njit
+    def l1_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Manhattan distance between two positions."""
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
-    
-    def l2_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
+
+    @staticmethod
+    @njit
+    def l2_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Euclidean distance between two positions."""
         return np.sqrt((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2)
     
@@ -134,11 +157,35 @@ class Board:
         ]
         return [pos for pos in adjacent if self.is_valid_position(pos)]
     
+    def get_adjacent_cells(self, position: Tuple[int, int]) -> List[BoardCell]:
+        """Get adjacent cells for a given position."""
+        """Returns a list of adjacent cell positions."""
+        if not self.is_valid_position(position):
+            raise ValueError(f"Position {position} is out of bounds")
+        
+        adjacent = self.get_adjacent_positions(position)
+        return [self.get_cell(pos) for pos in adjacent if self.get_cell(pos) is not None]
+    
+    def get_cells_in_l1_range(self, position: Tuple[int, int], l1_range: int) -> List[BoardCell]:
+        """Get all cells within a certain amount of steps from a position."""
+        return [self.get_cell(pos) for pos in self.get_positions_in_l1_range(position, l1_range)]
+    
+    def get_positions_in_l1_range(self, position: Tuple[int, int], l1_range: int) -> List[Tuple[int, int]]:
+        """Get all positions within a certain amount of steps from a position."""
+        positions_in_range = []
+        for dx in range(-l1_range, l1_range + 1):
+            for dy in range(-l1_range + abs(dx), l1_range - abs(dx) + 1):
+                new_pos = (position[0] + dx, position[1] + dy)
+                if self.is_valid_position(new_pos):
+                    positions_in_range.append(new_pos)
+        return positions_in_range
+    
+
     def find_path(self, start: Tuple[int, int], target: Tuple[int, int]) -> List[Tuple[int, int]]:
         """Simple pathfinding using A* algorithm."""
         
         if not self.is_valid_position(start) or not self.is_valid_position(target):
-            return []
+            raise ValueError("Start or target position is out of bounds")
 
         # A* algorithm setup
         open_set = PriorityQueue()
@@ -146,7 +193,6 @@ class Board:
         came_from = {start: None}
         g_score = {start: 0.0}
         f_score = {start: self.l1_distance(start, target)}
-        maxl2 = self.l2_distance(start, target)
 
         while not open_set.empty():
             current = open_set.get()[1]
@@ -160,19 +206,23 @@ class Board:
                 return total_path
 
             for neighbor in self.get_adjacent_positions(current):
+
                 if not self.get_cell(neighbor).is_empty() and neighbor != target:
                     continue
                 tentative_g_score = g_score[current] + 1  # Assume cost is 1
                 #Prefer move that is closer to target according to l2
                 dl2 = max(self.l2_distance(current, target) - self.l2_distance(neighbor, target), 0)
-                tentative_g_score -= dl2/maxl2 # Normalize by max l2 distance to make it secondary to real cost
+                tentative_g_score -= dl2/100
+
+                if abs(neighbor[0] - current[0]) > abs(neighbor[1] - current[1]):
+                    tentative_g_score -= 0.02  # Horizontal movement is preferred
 
 
                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                     came_from[neighbor] = current
                     g_score[neighbor] = tentative_g_score
                     f_score[neighbor] = tentative_g_score + self.l1_distance(neighbor, target)
-                    if neighbor not in [i[1] for i in open_set.queue]:
+                    if neighbor not in [i for i in open_set.queue]:
                         open_set.put((f_score[neighbor], neighbor))
 
         return []
@@ -202,6 +252,14 @@ class Board:
         if cell and not cell.is_empty():
             return cell.remove_unit()
         raise ValueError(f"Tried to remove unit from empty cell {position}")
+    
+    def set_planned(self, position: Tuple[int, int]):
+        """Set a cell as planned for unit movement."""
+        cell = self.get_cell(position)
+        if cell and cell.is_empty():
+            cell.set_planned()
+        else:
+            raise ValueError(f"Cell {position} is not empty or already planned")
 
     def clone(self) -> 'Board':
         """Create a deep copy of the board."""
@@ -241,13 +299,15 @@ class Board:
             print()
         print()
     
+
+    
 class HexBoard(Board):
     """
     Hexagonal board implementation using offset coordinates.
     Uses odd-r offset coordinates where odd rows are shifted right.
     """
     
-    def __init__(self, size: Tuple[int, int] = (8, 8)):
+    def __init__(self, size: Tuple[int, int] = (7, 8)):
         super().__init__(size)
     
     
@@ -277,7 +337,9 @@ class HexBoard(Board):
         
         return [pos for pos in adjacent if self.is_valid_position(pos)]
     
-    def l1_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
+    @staticmethod
+    @njit
+    def l1_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Manhattan distance for hexagonal grid using odd-r offset coordinates."""
         x1, y1 = pos1
         x2, y2 = pos2
@@ -290,43 +352,39 @@ class HexBoard(Board):
 
         # Calculate hex distance in axial coordinates
         return (abs(q1 - q2) + abs(q1 + r1 - q2 - r2) + abs(r1 - r2)) // 2
-    
-    def l2_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
+
+    @staticmethod
+    @njit
+    def l2_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Euclidean distance for hexagonal grid."""
         x1, y1 = pos1
         x2, y2 = pos2
         
         # Convert to axial coordinates
-        q1, r1 = self.oddr_to_axial((x1, y1))
-        q2, r2 = self.oddr_to_axial((x2, y2))
+        q1, r1 = oddr_to_axial((x1, y1))
+        q2, r2 = oddr_to_axial((x2, y2))
 
-        # Convert to pixel coordinates, with center to center distance of 1
-        x1 = (q1 + r1 / 2) 
+        # Convert to pixel coordinates, with center to center distance of 1 (divide everything by sqrt(3))
+        x1 = (q1 + r1 / 2)
         y1 = r1 * 3**0.5/2
         x2 = (q2 + r2 / 2) 
         y2 = r2 * 3**0.5/2
 
-
-
-        # Calculate Euclidean distance in axial coordinates
-        return np.sqrt((q1 - q2) ** 2 + (r1 - r2) ** 2)
+        # Calculate Euclidean distance 
+        return np.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
     
-    def oddr_to_axial(self, position: Tuple[int, int]) -> Tuple[int, int]:
-        """Convert odd-r offset coordinates to axial coordinates."""
-        x, y = position
-        q = x - (y - (y & 1)) // 2
-        r = y
-        return (q, r)
-
-    def axial_to_oddr(self, position: Tuple[int, int]) -> Tuple[int, int]:
-        """Convert axial coordinates to odd-r offset coordinates."""
-        q, r = position
-        x = q + (r - (r & 1)) // 2
-        y = r
-        return (x, y)
-
-        
-        
+    def get_cells_in_l1_range(self, position: Tuple[int, int], l1_range: int) -> List[BoardCell]:
+        """Get all cells within a certain amount of steps from a position in hexagonal grid."""
+        results = []
+        (q0, r0) = oddr_to_axial(position)
+        for q in range(-l1_range, l1_range + 1):
+            for r in range(max(-l1_range, -q - l1_range), min(l1_range, -q + l1_range) + 1):
+                x,y = axial_to_oddr((q0 + q, r0 + r))
+                if self.is_valid_position((x, y)):
+                    cell = self.get_cell((x, y))
+                    if cell:
+                        results.append(cell)
+        return results
 
     def create_hex_cell(self, content=""):
         """
@@ -338,12 +396,12 @@ class HexBoard(Board):
         content_str = str(content)[:6]
         # Each cell's 5 lines:
         cell = [
-            "   /  \\   ",  # line 0: top point
-            " /      \\ ",  # line 1: upper sides
-            f"|{content_str:^8}|",  # line 2: content line
-            f"|{' ':^8}|",  # line 3: empty line for symmetry
-            " \\      / ",  # line 4: lower sides
-            "   \\  /   "   # line 5: bottom point
+            "  _ /  \\ _  ",  # line 0: top point
+            " /        \\ ",  # line 1: upper sides
+            f"|{content_str:^10}|",  # line 2: content line
+            f"|{' ':^10}|",  # line 3: empty line for symmetry
+            " \\ _    _ / ",  # line 4: lower sides
+            "    \\  /    "   # line 5: bottom point
         ]
         return cell
 
@@ -354,7 +412,7 @@ class HexBoard(Board):
         if title:
             print(f"\n=== {title} ===")
         # Each hex cell's dimensions
-        cell_width = 10   # each cell drawn is 8 characters wide
+        cell_width = 12   # each cell drawn is 8 characters wide
         cell_height = 6  # each cell drawn is 5 lines tall
         
         # In a point-up hex grid the vertical stacking overlaps.
@@ -378,7 +436,7 @@ class HexBoard(Board):
                 y_offset = r * vert_offset
 
                 cell = self.get_cell((c, r))
-                if not cell or cell.is_empty():
+                if not cell or cell.is_empty() or cell.is_planned():
                     cell_content = f" "
                 else:
                     cell_content = cell.unit._get_unit_symbol().upper() if cell.unit.team == 1 else cell.unit._get_unit_symbol().lower()
@@ -403,8 +461,22 @@ class HexBoard(Board):
         ascii_art = "\n".join("".join(row) for row in canvas)
         print(ascii_art)
 
+@njit
+def oddr_to_axial(position: Tuple[int, int]) -> Tuple[int, int]:
+    """Convert odd-r offset coordinates to axial coordinates."""
+    x, y = position
+    q = x - (y - (y & 1)) // 2
+    r = y
+    return (q, r)
+@njit
+def axial_to_oddr(position: Tuple[int, int]) -> Tuple[int, int]:
+    """Convert axial coordinates to odd-r offset coordinates."""
+    q, r = position
+    x = q + (r - (r & 1)) // 2
+    y = r
+    return (x, y)
 
-
+#TODO: Triangular board?
 
             
         

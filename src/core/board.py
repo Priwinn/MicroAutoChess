@@ -9,7 +9,7 @@ from enum import Enum
 from queue import PriorityQueue
 # from src.numba_classes.numba_pq import NumbaPriorityQueue as PriorityQueue
 # from src.numba_classes.numba_pq import PriorityQueue as PriorityQueue
-from numba import njit
+# from numba import njit
 
 # from src.numba_classes.numba_pq import PurePythonPriorityQueue as PriorityQueue
 # from src.numba_classes.numba_pq import PriorityQueue as PriorityQueue
@@ -137,13 +137,13 @@ class Board:
         return [unit for unit in self.get_units() if getattr(unit, 'team', 0) == team]
     
     @staticmethod
-    @njit
+    # @njit
     def l1_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Manhattan distance between two positions."""
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
     @staticmethod
-    @njit
+    # @njit
     def l2_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Euclidean distance between two positions."""
         return np.sqrt((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2)
@@ -338,7 +338,7 @@ class HexBoard(Board):
         return [pos for pos in adjacent if self.is_valid_position(pos)]
     
     @staticmethod
-    @njit
+    # @njit
     def l1_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Manhattan distance for hexagonal grid using odd-r offset coordinates."""
         x1, y1 = pos1
@@ -354,7 +354,7 @@ class HexBoard(Board):
         return (abs(q1 - q2) + abs(q1 + r1 - q2 - r2) + abs(r1 - r2)) // 2
 
     @staticmethod
-    @njit
+    # @njit
     def l2_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Euclidean distance for hexagonal grid."""
         x1, y1 = pos1
@@ -461,14 +461,14 @@ class HexBoard(Board):
         ascii_art = "\n".join("".join(row) for row in canvas)
         print(ascii_art)
 
-@njit
+# @njit
 def oddr_to_axial(position: Tuple[int, int]) -> Tuple[int, int]:
     """Convert odd-r offset coordinates to axial coordinates."""
     x, y = position
     q = x - (y - (y & 1)) // 2
     r = y
     return (q, r)
-@njit
+# @njit
 def axial_to_oddr(position: Tuple[int, int]) -> Tuple[int, int]:
     """Convert axial coordinates to odd-r offset coordinates."""
     q, r = position

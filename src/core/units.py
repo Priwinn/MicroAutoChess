@@ -7,28 +7,28 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 import numpy as np
 import random
-from numba.experimental import jitclass
-from numba import float32
+# from numba.experimental import jitclass
+# from numba import float32
 from src.core.spells import *
 from src.core.constant_types import UnitType, UnitRarity, DamageType
 
 
 
 
-spec = {
-    'health': float32,
-    'attack': float32,
-    'defense': float32,
-    'resistance': float32,
-    'range': float32,
-    'crit_rate': float32,
-    'crit_dmg': float32,
-    'mana': float32,
-    'max_mana': float32,
-    'move_speed': float32,
-    'attack_speed': float32,
-    'spell': AbstractSpell
-}
+# spec = {
+#     'health': float32,
+#     'attack': float32,
+#     'defense': float32,
+#     'resistance': float32,
+#     'range': float32,
+#     'crit_rate': float32,
+#     'crit_dmg': float32,
+#     'mana': float32,
+#     'max_mana': float32,
+#     'move_speed': float32,
+#     'attack_speed': float32,
+#     'spell': AbstractSpell
+# }
 # @jitclass(spec)
 @dataclass
 class UnitStats:

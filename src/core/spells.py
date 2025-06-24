@@ -1,4 +1,4 @@
-from numba.experimental import jitclass
+# from numba.experimental import jitclass
 from src.core.constant_types import DamageType
 
 

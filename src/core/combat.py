@@ -4,6 +4,7 @@ Combat simulation engine for auto chess battles.
 
 import numpy as np
 from typing import List, Tuple, Dict, Optional, Set
+from spells import AbstractSpell
 from dataclasses import dataclass
 from enum import Enum
 import random
@@ -30,8 +31,10 @@ class CombatEvent:
     frame_number: int
     attacker: Optional[Unit]
     target: Optional[Unit]
-    action: CombatAction
+    action_type: CombatAction
+    spell_instance: Optional[AbstractSpell] = None
     damage: float = 0
+    crit_bool: bool = False
     position: Optional[Tuple[int, int]] = None
     description: str = ""
 
@@ -41,6 +44,7 @@ class PlannedAction:
     """Represents a planned action for a unit."""
     unit: Unit
     action_type: CombatAction
+    spell_instance: Optional[AbstractSpell] = None
     target: Optional[Unit] = None
     target_position: Optional[Tuple[int, int]] = None
     resolution_frame: int = 0  # When this action will execute
@@ -125,7 +129,7 @@ class CombatEngine:
                 frame_number=0,
                 attacker=None,
                 target=None,
-                action=CombatAction.WAIT,
+                action_type=CombatAction.WAIT,
                 description=f"Combat started with seed: {self.combat_seed}, Action timing: {self.action_timing}"
             )
             self.combat_log.append(start_event)
@@ -249,7 +253,7 @@ class CombatEngine:
                         frame_number=self.frame_number,
                         attacker=action.unit,
                         target=action.target,
-                        action=action.action_type,
+                        action_type=action.action_type,
                         description=f"{action.unit.unit_type.value} plans {action.action_type.value} to {action.target_position if action.target_position else action.target} (resolves in frame {action.resolution_frame})"
                     )
                     self.combat_log.append(plan_event)
@@ -271,7 +275,7 @@ class CombatEngine:
                             frame_number=self.frame_number,
                             attacker=action.unit,
                             target=None,
-                            action=CombatAction.WAIT,
+                            action_type=CombatAction.WAIT,
                             description=f"Movement plan conflict at {pos}: {action.unit.unit_type.value} was set to WAIT."
                         )
                         self.combat_log.append(conflict_event)
@@ -281,7 +285,7 @@ class CombatEngine:
                     frame_number=self.frame_number,
                     attacker=None,
                     target=None,
-                    action=CombatAction.MOVE,
+                    action_type=CombatAction.MOVE,
                     position=pos,
                     description=f"Movement plan conflict at {pos}: {chosen_action.unit.unit_type.value} was randomly chosen to be resolved."
                 )
@@ -305,12 +309,17 @@ class CombatEngine:
         
         # If the unit has an unranged spell and enough mana, it casts it.
         if unit.current_mana >= unit.base_stats.max_mana and unit.base_stats.spell.ranged == False:
-            unit.current_mana -= unit.base_stats.max_mana
-            return PlannedAction(
-                unit=unit,
-                action_type=CombatAction.CAST_SPELL,
-                target=unit #Right now non ranged spells target self, but this can be changed later
-            )
+            valid_prepare = unit.base_stats.spell.prepare(unit, self.board)
+            if valid_prepare:
+                unit.current_mana -= unit.base_stats.max_mana
+                return PlannedAction(
+                    unit=unit,
+                    action_type=CombatAction.CAST_SPELL,
+                    spell_instance=unit.base_stats.spell,
+                    target=unit.base_stats.spell.target
+                )
+            else:
+                raise ValueError("Invalid prepare for spell")
 
         
         # Find target (closest enemy). 
@@ -328,12 +337,17 @@ class CombatEngine:
         if unit.current_mana >= unit.base_stats.max_mana and unit.base_stats.spell.ranged and distance <= unit.base_stats.spell.range + 0.01:
             # If the unit has enough mana and a ranged spell, it can cast it
             # Plan spell cast
-            unit.current_mana -= unit.base_stats.max_mana
-            return PlannedAction(
-                unit=unit,
-                action_type=CombatAction.CAST_SPELL,
-                target=target
-            )
+            valid_prepare = unit.base_stats.spell.prepare(unit, self.board)
+            if valid_prepare:
+                unit.current_mana -= unit.base_stats.max_mana
+                return PlannedAction(
+                    unit=unit,
+                    action_type=CombatAction.CAST_SPELL,
+                    spell_instance=unit.base_stats.spell,
+                    target=unit.base_stats.spell.target
+                )
+            else:
+                raise ValueError("Invalid prepare for spell")
 
         if distance <= unit.base_stats.range + 0.66:  # Adding 0.66 because (0,0) 4 range reaches (3,4)  in that other game. It also reaches (0,5) and (1,5) but not (2,5), like the other game. Also ensures 1 range units only reach adjacent cells.
             # In range - plan attack
@@ -383,7 +397,7 @@ class CombatEngine:
                     frame_number=self.frame_number,
                     attacker=action.unit,
                     target=action.target,
-                    action=CombatAction.ATTACK,
+                    action_type=CombatAction.ATTACK,
                     description=f"Attack from {action.unit.unit_type.value} fails (target dead)" #TODO: might want to retarget to a different unit if possible (see fizzling)
                 )
                 self.combat_log.append(event)
@@ -392,15 +406,17 @@ class CombatEngine:
             # Add mana from basic attack
             action.unit.add_basic_attack_mana()
             # Apply damage to the target
-            actual_damage = action.target.take_damage(action.unit.get_basic_final_damage(self.rng.random()))
+            premitigated_basic_damage, crit_bool = action.unit.get_basic_final_damage(self.rng.random())
+            actual_damage = action.target.take_damage(premitigated_basic_damage)
             
             # Log each attack separately
             event = CombatEvent(
                 frame_number=self.frame_number,
                 attacker=action.unit,
                 target=action.target,
-                action=CombatAction.ATTACK,
+                action_type=CombatAction.ATTACK,
                 damage=actual_damage,
+                crit_bool=crit_bool,
                 description=f"{action.unit.unit_type.value} deals {actual_damage} damage to {action.target.unit_type.value} (planned in frame {action.planned_frame})"
             )
             self.combat_log.append(event)  
@@ -410,7 +426,7 @@ class CombatEngine:
         for action in spell_actions:
             if not action.unit.is_alive() or not action.target or not action.target.is_alive():
                 continue
-            action.unit.base_stats.spell.execute(action.unit, action.target, self.board, 
+            action.unit.base_stats.spell.execute(action.unit, self.board, 
                                        crit_rate=action.unit.base_stats.crit_rate, 
                                        crit_dmg=action.unit.base_stats.crit_dmg, 
                                        can_crit=action.unit.spell_crit, 
@@ -421,7 +437,7 @@ class CombatEngine:
                 frame_number=self.frame_number,
                 attacker=action.unit,
                 target=action.target,
-                action=CombatAction.CAST_SPELL,
+                action_type=CombatAction.CAST_SPELL,
                 description=f"{action.unit.unit_type.value} casts a {action.unit.base_stats.spell.name} spell (planned in frame {action.planned_frame})"
             )
             self.combat_log.append(event)
@@ -444,7 +460,7 @@ class CombatEngine:
                         frame_number=self.frame_number,
                         attacker=action.unit,
                         target=None,
-                        action=CombatAction.MOVE,
+                        action_type=CombatAction.MOVE,
                         position=new_position,
                         description=f"{action.unit.unit_type.value} moves to {new_position} (planned in frame {action.planned_frame})"
                     )
@@ -455,7 +471,7 @@ class CombatEngine:
                         frame_number=self.frame_number,
                         attacker=action.unit,
                         target=None,
-                        action=CombatAction.WAIT,
+                        action_type=CombatAction.WAIT,
                         position=new_position,
                         description=f"{action.unit.unit_type.value} failed to move to {new_position} (occupied); cancelling movement."
                     )
@@ -472,7 +488,7 @@ class CombatEngine:
                                 frame_number=self.frame_number,
                                 attacker=pending.unit,
                                 target=None,
-                                action=CombatAction.WAIT,
+                                action_type=CombatAction.WAIT,
                                 description=f"Cancelled pending move for {pending.unit.unit_type.value} to {pending.target_position}"
                             )
                             self.combat_log.append(cancel_event)
@@ -486,7 +502,7 @@ class CombatEngine:
                     frame_number=self.frame_number,
                     attacker=None,
                     target=unit,
-                    action=CombatAction.WAIT,
+                    action_type=CombatAction.WAIT,
                     description=f"{unit.unit_type.value} is defeated!"
                 )
                 self.combat_log.append(death_event)

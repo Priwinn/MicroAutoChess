@@ -4,12 +4,12 @@ Unit definitions and mechanics for auto chess.
 
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from typing import *
 import numpy as np
 import random
 # from numba.experimental import jitclass
 # from numba import float32
-from src.core.spells import *
+from src.core.spells import AbstractSpell, FireballSpell, AttackSpeedBuffSpell, SelfHealSpell, AssassinBlinkSpell
 from src.core.constant_types import UnitType, UnitRarity, DamageType
 from itertools import count
 
@@ -147,15 +147,15 @@ class Unit:
         max_health = self.get_max_health()
         self.current_health = min(max_health, self.current_health + amount)
 
-    def get_basic_final_damage(self, crit_roll: float) -> float:
+    def get_basic_final_damage(self, crit_roll: float) -> Tuple[float, bool]:
         """
         Calculate final damage dealt to a target unit.
         Includes crit chance and crit damage.
         """
         base_damage = self.get_attack()
         if crit_roll < self.base_stats.crit_rate:
-            return int(base_damage * self.base_stats.crit_dmg)
-        return base_damage
+            return int(base_damage * self.base_stats.crit_dmg), True
+        return base_damage, False
     
     def can_upgrade(self, other_units: List['Unit']) -> bool:
         """Check if unit can be upgraded with other units."""

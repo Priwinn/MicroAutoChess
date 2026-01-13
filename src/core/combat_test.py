@@ -237,11 +237,11 @@ def interactive_step_by_step():
         if frame_events:
             print(f"\nframe {frame_num} Events:")
             for event in frame_events:
-                if event.action == CombatAction.ATTACK:
+                if event.action_type == CombatAction.ATTACK:
                     print(f"  ⚔️  {event.description}")
-                elif event.action == CombatAction.MOVE:
+                elif event.action_type == CombatAction.MOVE:
                     print(f"  🏃 {event.description}")
-                elif event.action == CombatAction.CAST_SPELL:
+                elif event.action_type == CombatAction.CAST_SPELL:
                     print(f"  ✨ {event.description}")
                 elif "defeated" in event.description.lower():
                     print(f"  💀 {event.description}")

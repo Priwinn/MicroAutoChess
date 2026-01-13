@@ -65,31 +65,31 @@ class PygameBoardVisualizer:
         self.screen.fill(self.bg_color)
 
         moving_map = {}
-        # if engine is not None:
-        #     pending = engine.get_pending_actions()
-        #     for action in pending:
-        #         if action.action_type == CombatAction.MOVE and action.start_position and action.target_position:
-        #             # Only animate if resolution is in the future
-        #             if action.resolution_frame > sim_frame:
-        #                 start_f = action.planned_frame
-        #                 end_f = action.resolution_frame
-        #                 denom = max(1, end_f - start_f)
-        #                 t = (sim_frame + sim_progress - start_f) / denom
-        #                 t = max(0.0, min(1.0, t))
+        if engine is not None:
+            pending = engine.get_pending_actions()
+            for action in pending:
+                if action.action_type == CombatAction.MOVE and action.start_position and action.target_position:
+                    # Only animate if resolution is in the future
+                    if action.resolution_frame > sim_frame:
+                        start_f = action.planned_frame
+                        end_f = action.resolution_frame
+                        denom = max(1, end_f - start_f)
+                        t = (sim_frame + sim_progress - start_f) / denom
+                        t = max(0.0, min(1.0, t))
 
-        #                 q1, r1 = oddr_to_axial(action.start_position)
-        #                 q2, r2 = oddr_to_axial(action.target_position)
-        #                 x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
-        #                 x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
-        #                 # offsets
-        #                 cx1 = x1 + self.margin + self.window_size[0] * 0.02
-        #                 cy1 = y1 + self.margin + self.cell_radius + 4
-        #                 cx2 = x2 + self.margin + self.window_size[0] * 0.02
-        #                 cy2 = y2 + self.margin + self.cell_radius + 4
+                        q1, r1 = oddr_to_axial(action.start_position)
+                        q2, r2 = oddr_to_axial(action.target_position)
+                        x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
+                        x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
+                        # offsets
+                        cx1 = x1 + self.margin + self.window_size[0] * 0.02
+                        cy1 = y1 + self.margin + self.cell_radius + 4
+                        cx2 = x2 + self.margin + self.window_size[0] * 0.02
+                        cy2 = y2 + self.margin + self.cell_radius + 4
 
-        #                 ix = int(cx1 + (cx2 - cx1) * t)
-        #                 iy = int(cy1 + (cy2 - cy1) * t)
-        #                 moving_map[action.unit.id] = (action.unit, ix, iy, action)
+                        ix = int(cx1 + (cx2 - cx1) * t)
+                        iy = int(cy1 + (cy2 - cy1) * t)
+                        moving_map[action.unit.id] = (action.unit, ix, iy, action)
 
             # If any pending action for a unit was cancelled (converted to WAIT and start_position cleared),
             # ensure we don't animate that unit.
@@ -150,27 +150,27 @@ class PygameBoardVisualizer:
                     pygame.draw.rect(self.screen, (80, 140, 220), (hb_x, mb_y, int(bar_w * mana_ratio), bar_h))
 
         # Draw moving units on top
-        # for _uid, (unit, ix, iy, action) in moving_map.items():
-        #     team = getattr(unit, 'team', 0)
-        #     color = self.team_colors.get(team, (200, 200, 200))
-        #     pygame.draw.circle(self.screen, color, (ix, iy), int(self.cell_radius * 0.6))
-        #     symbol = unit._get_unit_symbol()
-        #     text_surf = self.font.render(symbol, True, (255, 255, 255))
-        #     text_rect = text_surf.get_rect(center=(ix, iy))
-        #     self.screen.blit(text_surf, text_rect)
+        for _uid, (unit, ix, iy, action) in moving_map.items():
+            team = getattr(unit, 'team', 0)
+            color = self.team_colors.get(team, (200, 200, 200))
+            pygame.draw.circle(self.screen, color, (ix, iy), int(self.cell_radius * 0.6))
+            symbol = unit._get_unit_symbol()
+            text_surf = self.font.render(symbol, True, (255, 255, 255))
+            text_rect = text_surf.get_rect(center=(ix, iy))
+            self.screen.blit(text_surf, text_rect)
 
-        #     bar_w = int(self.cell_radius * 1.6)
-        #     bar_h = max(4, int(self.cell_radius * 0.18))
-        #     hb_x = ix - bar_w // 2
-        #     hb_y = iy - int(self.cell_radius * 0.9)
-        #     pygame.draw.rect(self.screen, (50, 50, 50), (hb_x, hb_y, bar_w, bar_h))
-        #     hp_ratio = max(0.0, min(1.0, unit.current_health / unit.get_max_health()))
-        #     pygame.draw.rect(self.screen, (50, 200, 100), (hb_x, hb_y, int(bar_w * hp_ratio), bar_h))
-        #     mb_y = iy + int(self.cell_radius * 0.7)
-        #     pygame.draw.rect(self.screen, (50, 50, 50), (hb_x, mb_y, bar_w, bar_h))
-        #     max_mana = getattr(unit.base_stats, 'max_mana', 0) or 1
-        #     mana_ratio = max(0.0, min(1.0, unit.current_mana / max_mana))
-        #     pygame.draw.rect(self.screen, (80, 140, 220), (hb_x, mb_y, int(bar_w * mana_ratio), bar_h))
+            bar_w = int(self.cell_radius * 1.6)
+            bar_h = max(4, int(self.cell_radius * 0.18))
+            hb_x = ix - bar_w // 2
+            hb_y = iy - int(self.cell_radius * 0.9)
+            pygame.draw.rect(self.screen, (50, 50, 50), (hb_x, hb_y, bar_w, bar_h))
+            hp_ratio = max(0.0, min(1.0, unit.current_health / unit.get_max_health()))
+            pygame.draw.rect(self.screen, (50, 200, 100), (hb_x, hb_y, int(bar_w * hp_ratio), bar_h))
+            mb_y = iy + int(self.cell_radius * 0.7)
+            pygame.draw.rect(self.screen, (50, 50, 50), (hb_x, mb_y, bar_w, bar_h))
+            max_mana = getattr(unit.base_stats, 'max_mana', 0) or 1
+            mana_ratio = max(0.0, min(1.0, unit.current_mana / max_mana))
+            pygame.draw.rect(self.screen, (80, 140, 220), (hb_x, mb_y, int(bar_w * mana_ratio), bar_h))
 
     def present(self):
         pygame.display.flip()

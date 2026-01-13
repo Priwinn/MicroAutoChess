@@ -24,7 +24,7 @@ def main():
 
     running = True
     paused = False
-    fps = 60  # number of simulation frames (rounds) per second
+    fps = 20  # number of simulation frames (rounds) per second
 
     # initial planning for frame 0
     all_units = [u for u in team1_units + team2_units if u.is_alive()]
@@ -46,8 +46,8 @@ def main():
                     if event.key == pygame.K_n:
                         # advance one simulation frame
                         engine.frame_number += 1
-                        engine._execute_queued_actions()
                         all_units = [u for u in team1_units + team2_units if u.is_alive()]
+                        engine._execute_queued_actions()
                         engine._plan_actions(all_units)
                         engine._cleanup_dead_units(all_units)
                         sim_progress = 0.0
@@ -57,8 +57,8 @@ def main():
                 # advance as many whole simulation frames as needed
                 while sim_progress >= 1.0:
                     engine.frame_number += 1
-                    engine._execute_queued_actions()
                     all_units = [u for u in team1_units + team2_units if u.is_alive()]
+                    engine._execute_queued_actions()
                     engine._plan_actions(all_units)
                     engine._cleanup_dead_units(all_units)
                     sim_progress -= 1.0

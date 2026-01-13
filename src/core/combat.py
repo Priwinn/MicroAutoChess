@@ -259,7 +259,7 @@ class CombatEngine:
                 # Randomly select one action to keep
                 chosen_action = self.rng.choice(actions)
                 self.action_queue.append(chosen_action)
-                self.board.set_planned(chosen_action.target_position)
+                self.board.set_planned(chosen_action.target_position, chosen_action.unit)
                 # Set other actions to WAIT
                 for action in actions:
                     if action != chosen_action:
@@ -289,7 +289,7 @@ class CombatEngine:
             else:
                 # No conflict, just add the single action
                 self.action_queue.append(actions[0])
-                # self.board.set_planned(actions[0].target_position)
+                self.board.set_planned(actions[0].target_position, actions[0].unit)
             
 
 

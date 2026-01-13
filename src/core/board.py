@@ -28,7 +28,9 @@ class CellType(Enum):
 class BoardCell:
     """Represents a single cell on the game board."""
     position: Tuple[int, int]
-    unit: Optional[Unit] = None
+    # DO NOT USE THIS TO CHECK IF CELL IS OCCUPIED
+    # WHEN CHECK FOR AOE DAMAGE, CHECK IF A UNIT IS BEING HUT TWICE
+    unit: Optional[Unit] = None     
     cell_type: CellType = CellType.EMPTY
     
     def is_empty(self) -> bool:
@@ -36,6 +38,9 @@ class BoardCell:
     
     def is_planned(self) -> bool:
         return self.cell_type == CellType.PLANNED
+    
+    def is_occupied(self) -> bool:
+        return self.cell_type == CellType.UNIT
     
     
     def place_unit(self, unit: Unit):
@@ -115,7 +120,7 @@ class Board:
         if not from_cell or not to_cell:
             return False
         
-        if from_cell.unit is None or not to_cell.is_empty():
+        if from_cell.unit is None or (to_cell.is_planned() and to_cell.unit != from_cell.unit) or to_cell.is_occupied():
             return False
         
         unit = from_cell.remove_unit()
@@ -253,11 +258,12 @@ class Board:
             return cell.remove_unit()
         raise ValueError(f"Tried to remove unit from empty cell {position}")
     
-    def set_planned(self, position: Tuple[int, int]):
+    def set_planned(self, position: Tuple[int, int], unit: Unit):
         """Set a cell as planned for unit movement."""
         cell = self.get_cell(position)
         if cell and cell.is_empty():
             cell.set_planned()
+            cell.unit = unit
         else:
             raise ValueError(f"Cell {position} is not empty or already planned")
 

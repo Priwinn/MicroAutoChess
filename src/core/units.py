@@ -11,6 +11,7 @@ import random
 # from numba import float32
 from src.core.spells import *
 from src.core.constant_types import UnitType, UnitRarity, DamageType
+from itertools import count
 
 
 
@@ -53,6 +54,7 @@ class Unit:
     """
     Represents a single unit in the auto chess game.
     """
+    _ids = count(0)
     unit_type: UnitType
     rarity: UnitRarity
     team: int
@@ -79,6 +81,7 @@ class Unit:
         
         if self.current_health is None:
             self.current_health = self.get_max_health()
+        self.id = next(self._ids)
     
     def _get_default_stats(self) -> UnitStats:
         """Get default stats based on unit type."""

@@ -81,7 +81,7 @@ class AssassinBlinkSpell(AbstractSpell):
         if weakest_enemy:
             # Move the assassin to the cell adjacent to the weakest enemy that is farthest to the source
             adjacent_positions = board.get_adjacent_positions(weakest_enemy.position)
-            valid_positions = [pos for pos in adjacent_positions if board.get_cell(pos).is_empty()]
+            valid_positions = [pos for pos in adjacent_positions if (board.get_cell(pos).is_empty() and not board.get_cell(pos).is_planned())]
             # Find the farthest valid position to the source
             valid_positions.sort(key=lambda pos: board.l1_distance(source.position, pos), reverse=True)
             if valid_positions:
@@ -89,7 +89,7 @@ class AssassinBlinkSpell(AbstractSpell):
             else:
                 #Try within 2 range of weakest enemy
                 valid_positions = board.get_positions_in_l1_range(weakest_enemy.position, 2)
-                valid_positions = [pos for pos in valid_positions if board.get_cell(pos).is_empty()]
+                valid_positions = [pos for pos in valid_positions if (board.get_cell(pos).is_empty() and not board.get_cell(pos).is_planned())]
                 valid_positions.sort(key=lambda pos: board.l1_distance(source.position, pos))
                 if valid_positions:
                     board.move_unit(source.position, valid_positions[0])

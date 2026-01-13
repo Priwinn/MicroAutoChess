@@ -44,12 +44,12 @@ class CombatVisualizer:
         print("-" * 60)
         
         recent_events = events[-max_events:] if len(events) > max_events else events
-        current_round = 0
+        current_frame = 0
         
         for event in recent_events:
-            if event.round_number != current_round:
-                current_round = event.round_number
-                print(f"\n--- Round {current_round} ---")
+            if event.frame_number != current_frame:
+                current_frame = event.frame_number
+                print(f"\n--- frame {current_frame} ---")
             
             if event.action == CombatAction.ATTACK:
                 print(f"  ⚔️  {event.description}")
@@ -171,7 +171,7 @@ def run_combat_demonstration(debug: bool = False, combat_seed: int = 42):
         else:
             print("🤝 DRAW!")
         
-        print(f"⏱️  Total Rounds: {summary['total_rounds']}")
+        print(f"⏱️  Total frames: {summary['total_frames']}")
         print(f"📊 Total Events: {summary['total_events']}")
     
         # Analyze the combat
@@ -204,39 +204,39 @@ def interactive_step_by_step():
     visualizer.print_unit_stats(team1_units, "Team 1")
     visualizer.print_unit_stats(team2_units, "Team 2")
     
-    round_num = 0
-    max_rounds = 500
+    frame_num = 0
+    max_frames = 500
     
-    while round_num < max_rounds:
-        round_num += 1
+    while frame_num < max_frames:
+        frame_num += 1
         
         # Check win conditions
         team1_alive = any(u.is_alive() for u in team1_units)
         team2_alive = any(u.is_alive() for u in team2_units)
         
         if not team1_alive:
-            print(f"\n🏆 Team 2 Wins after {round_num-1} rounds!")
+            print(f"\n🏆 Team 2 Wins after {frame_num-1} frames!")
             break
         if not team2_alive:
-            print(f"\n🏆 Team 1 Wins after {round_num-1} rounds!")
+            print(f"\n🏆 Team 1 Wins after {frame_num-1} frames!")
             break
         
-        print(f"\n{'='*20} Round {round_num} {'='*20}")
-        input("Press Enter to execute this round...")
+        print(f"\n{'='*20} frame {frame_num} {'='*20}")
+        input("Press Enter to execute this frame...")
         
-        # Execute one round
+        # Execute one frame
         all_units = [u for u in team1_units + team2_units if u.is_alive()]
-        combat_engine.round_number = round_num
-        combat_engine._execute_delayed_round(all_units)
+        combat_engine.frame_number = frame_num
+        combat_engine._execute_delayed_frame(all_units)
         
         # Show results
-        visualizer.print_board(f"After Round {round_num}")
+        visualizer.print_board(f"After frame {frame_num}")
         
-        # Show what happened this round
-        round_events = [e for e in combat_engine.combat_log if e.round_number == round_num]
-        if round_events:
-            print(f"\nRound {round_num} Events:")
-            for event in round_events:
+        # Show what happened this frame
+        frame_events = [e for e in combat_engine.combat_log if e.frame_number == frame_num]
+        if frame_events:
+            print(f"\nframe {frame_num} Events:")
+            for event in frame_events:
                 if event.action == CombatAction.ATTACK:
                     print(f"  ⚔️  {event.description}")
                 elif event.action == CombatAction.MOVE:

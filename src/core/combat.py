@@ -27,7 +27,7 @@ class CombatAction(Enum):
 @dataclass
 class CombatEvent:
     """Represents an event during combat."""
-    round_number: int
+    frame_number: int
     attacker: Optional[Unit]
     target: Optional[Unit]
     action: CombatAction
@@ -43,18 +43,19 @@ class PlannedAction:
     action_type: CombatAction
     target: Optional[Unit] = None
     target_position: Optional[Tuple[int, int]] = None
-    resolution_round: int = 0  # When this action will execute
-    planned_round: int = 0     # When this action was planned
+    resolution_frame: int = 0  # When this action will execute
+    planned_frame: int = 0     # When this action was planned
     description: str = ""
+    start_position: Optional[Tuple[int, int]] = None
 
 
 @dataclass
 class ActionTiming:
     """Configuration for how long different actions take to resolve. This is to account for animation and travel times."""
-    attack_delay: float = 10      # Rounds until attack resolves
-    move_delay: float = 4        # Rounds until movement resolves
-    spell_delay: float = 10       # Rounds until spell resolves
-    wait_delay: float = 2         # Rounds until wait resolves
+    attack_delay: float = 10      # frames until attack resolves
+    move_delay: float = 4        # frames until movement resolves
+    spell_delay: float = 10       # frames until spell resolves
+    wait_delay: float = 2         # frames until wait resolves
 
     def get_delay(self, action_type: CombatAction) -> float:
         """Get the delay for a specific action type."""
@@ -78,8 +79,8 @@ class CombatEngine:
     def __init__(self, board: Board, combat_seed: Optional[int] = None, action_timing: Optional[ActionTiming] = None):
         self.board = board
         self.combat_log: List[CombatEvent] = []
-        self.round_number = 0
-        self.max_rounds = 500  # Prevent infinite combat
+        self.frame_number = 0
+        self.max_frames = 500  # Prevent infinite combat
         
         # Action timing configuration
         self.action_timing = action_timing or ActionTiming()
@@ -116,12 +117,12 @@ class CombatEngine:
         
         self.combat_log.clear()
         self.action_queue.clear()
-        self.round_number = 0
+        self.frame_number = 0
         
         # Log combat start with seed info
         if self.combat_seed is not None:
             start_event = CombatEvent(
-                round_number=0,
+                frame_number=0,
                 attacker=None,
                 target=None,
                 action=CombatAction.WAIT,
@@ -130,8 +131,7 @@ class CombatEngine:
             self.combat_log.append(start_event)
         
         # Combat loop with delayed actions
-        while self.round_number < self.max_rounds:
-            self.round_number += 1
+        while self.frame_number < self.max_frames:
             
             # Get all living units
             all_units = [u for u in team1_units + team2_units if u.is_alive()]
@@ -148,8 +148,8 @@ class CombatEngine:
             if not team2_alive:
                 return 1  # Team 1 wins
             
-            # Execute round with delayed actions
-            self._execute_delayed_round(all_units)
+            # Execute frame with delayed actions
+            self._execute_delayed_frame(all_units)
         
         # Timeout - determine winner by remaining health
         team1_health = sum(u.current_health for u in team1_units if u.is_alive())
@@ -163,11 +163,12 @@ class CombatEngine:
             return 0  # Draw
             
 
-    def _execute_delayed_round(self, all_units: List[Unit]):
+    def _execute_delayed_frame(self, all_units: List[Unit]):
         """
-        Execute one round with delayed action resolution.
+        Execute one frame with delayed action resolution.
         """
-        # Phase 1: Execute actions that are ready this round
+        self.frame_number += 1
+        # Phase 1: Execute actions that are ready this frame
         self._execute_queued_actions()
         
         # Phase 2: Plan actions for living units
@@ -177,14 +178,14 @@ class CombatEngine:
         self._cleanup_dead_units(all_units)
     
     def _execute_queued_actions(self):
-        """Execute all actions that are scheduled to resolve this round."""
-        # Get actions that should resolve this round
+        """Execute all actions that are scheduled to resolve this frame."""
+        # Get actions that should resolve this frame
         actions_to_execute = [action for action in self.action_queue 
-                            if action.resolution_round <= self.round_number]
+                            if action.resolution_frame <= self.frame_number]
         
         # Remove executed actions from queue
         self.action_queue = [action for action in self.action_queue 
-                           if action.resolution_round > self.round_number]
+                           if action.resolution_frame > self.frame_number]
         
         if not actions_to_execute:
             return
@@ -211,7 +212,7 @@ class CombatEngine:
                 continue
             
             # Check if unit already has a pending action
-            has_pending_action = any(action.unit == unit for action in self.action_queue)
+            has_pending_action = any(action.unit.id == unit.id for action in self.action_queue)
             
             if not has_pending_action:
                 # Plan new action
@@ -221,16 +222,18 @@ class CombatEngine:
                     delay = self.action_timing.get_delay(action.action_type)
                     if action.action_type == CombatAction.ATTACK:
                         initiative_needed = (delay - unit.basic_attack_overflow)
-                        rounds_to_wait = initiative_needed / unit.get_attack_speed()
-                        rounded_rounds = math.ceil(rounds_to_wait)
-                        unit.basic_attack_overflow = (rounded_rounds * unit.get_attack_speed() - initiative_needed)
-                        action.resolution_round = self.round_number + rounded_rounds
+                        frames_to_wait = initiative_needed / unit.get_attack_speed()
+                        rounded_frames = math.ceil(frames_to_wait)
+                        unit.basic_attack_overflow = (rounded_frames * unit.get_attack_speed() - initiative_needed)
+                        action.resolution_frame = self.frame_number + rounded_frames
                     elif action.action_type == CombatAction.CAST_SPELL:
-                        action.resolution_round = self.round_number + action.unit.base_stats.spell.spell_delay
+                        action.resolution_frame = self.frame_number + action.unit.base_stats.spell.spell_delay
                     else:
-                        action.resolution_round = int(self.round_number + delay)
+                        action.resolution_frame = int(self.frame_number + delay)
 
-                    action.planned_round = self.round_number
+                    action.planned_frame = self.frame_number
+                    # capture start position for animations (movement interpolation)
+                    action.start_position = unit.position
                     
                     # Add to conflict map if it's a move action otherwise add to queue
                     if action.action_type == CombatAction.MOVE and action.target_position:
@@ -243,11 +246,11 @@ class CombatEngine:
                     
                     # Log action planning
                     plan_event = CombatEvent(
-                        round_number=self.round_number,
+                        frame_number=self.frame_number,
                         attacker=action.unit,
                         target=action.target,
                         action=action.action_type,
-                        description=f"{action.unit.unit_type.value} plans {action.action_type.value} to {action.target_position if action.target_position else action.target} (resolves in round {action.resolution_round})"
+                        description=f"{action.unit.unit_type.value} plans {action.action_type.value} to {action.target_position if action.target_position else action.target} (resolves in frame {action.resolution_frame})"
                     )
                     self.combat_log.append(plan_event)
         # Resolve movement conflicts after all actions are planned
@@ -261,11 +264,11 @@ class CombatEngine:
                 for action in actions:
                     if action != chosen_action:
                         action.action_type = CombatAction.WAIT
-                        action.resolution_round = self.round_number + int(self.action_timing.get_delay(CombatAction.MOVE)) # Set to wait to same delay as move so that it is fair (if wait was shorter, it would be unfair to the unit that is moving)
+                        action.resolution_frame = self.frame_number + int(self.action_timing.get_delay(CombatAction.MOVE)) # Set to wait to same delay as move so that it is fair (if wait was shorter, it would be unfair to the unit that is moving)
                         self.action_queue.append(action)
                         # Log the conflict resolution
                         conflict_event = CombatEvent(
-                            round_number=self.round_number,
+                            frame_number=self.frame_number,
                             attacker=action.unit,
                             target=None,
                             action=CombatAction.WAIT,
@@ -275,7 +278,7 @@ class CombatEngine:
                 
                 # Log conflict resolution
                 conflict_event = CombatEvent(
-                    round_number=self.round_number,
+                    frame_number=self.frame_number,
                     attacker=None,
                     target=None,
                     action=CombatAction.MOVE,
@@ -286,13 +289,14 @@ class CombatEngine:
             else:
                 # No conflict, just add the single action
                 self.action_queue.append(actions[0])
+                # self.board.set_planned(actions[0].target_position)
             
 
 
 
 
     def _plan_unit_action(self, unit: Unit, all_units: List[Unit]) -> Optional[PlannedAction]:
-        """Plan what action a unit will take this round."""
+        """Plan what action a unit will take this frame."""
         # Find enemies
         enemies = [u for u in all_units if u.is_alive() and u.team != unit.team]
         
@@ -370,13 +374,13 @@ class CombatEngine:
     
     def _execute_attacks_simultaneously(self, attack_actions: List[PlannedAction]):
         """Execute all planned attacks simultaneously."""
-        # Store units that are alive at the start of the round, if a unit is killed during the round, it should still be able to attack (simultaneous attacks)
+        # Store units that are alive at the start of the frame, if a unit is killed during the frame, it should still be able to attack (simultaneous attacks)
         alive_units: List[bool] = [action.unit.is_alive() for action in attack_actions]
         for alive, action in zip(alive_units, attack_actions):
             if not alive or not action.target or not action.target.is_alive():
                 # Log failed attack
                 event = CombatEvent(
-                    round_number=self.round_number,
+                    frame_number=self.frame_number,
                     attacker=action.unit,
                     target=action.target,
                     action=CombatAction.ATTACK,
@@ -392,12 +396,12 @@ class CombatEngine:
             
             # Log each attack separately
             event = CombatEvent(
-                round_number=self.round_number,
+                frame_number=self.frame_number,
                 attacker=action.unit,
                 target=action.target,
                 action=CombatAction.ATTACK,
                 damage=actual_damage,
-                description=f"{action.unit.unit_type.value} deals {actual_damage} damage to {action.target.unit_type.value} (planned in round {action.planned_round})"
+                description=f"{action.unit.unit_type.value} deals {actual_damage} damage to {action.target.unit_type.value} (planned in frame {action.planned_frame})"
             )
             self.combat_log.append(event)  
     
@@ -414,11 +418,11 @@ class CombatEngine:
             
 
             event = CombatEvent(
-                round_number=self.round_number,
+                frame_number=self.frame_number,
                 attacker=action.unit,
                 target=action.target,
                 action=CombatAction.CAST_SPELL,
-                description=f"{action.unit.unit_type.value} casts a {action.unit.base_stats.spell.name} spell (planned in round {action.planned_round})"
+                description=f"{action.unit.unit_type.value} casts a {action.unit.base_stats.spell.name} spell (planned in frame {action.planned_frame})"
             )
             self.combat_log.append(event)
     
@@ -434,16 +438,44 @@ class CombatEngine:
             new_position = action.target_position
             
             if old_position and new_position:
-                if self.board.move_unit(old_position, new_position):
+                moved = self.board.move_unit(old_position, new_position)
+                if moved:
                     event = CombatEvent(
-                        round_number=self.round_number,
+                        frame_number=self.frame_number,
                         attacker=action.unit,
                         target=None,
                         action=CombatAction.MOVE,
                         position=new_position,
-                        description=f"{action.unit.unit_type.value} moves to {new_position} (planned in round {action.planned_round})"
+                        description=f"{action.unit.unit_type.value} moves to {new_position} (planned in frame {action.planned_frame})"
                     )
                     self.combat_log.append(event)
+                else:
+                    # Movement failed (target occupied). Cancel any future/related move animations for this unit.
+                    fail_event = CombatEvent(
+                        frame_number=self.frame_number,
+                        attacker=action.unit,
+                        target=None,
+                        action=CombatAction.WAIT,
+                        position=new_position,
+                        description=f"{action.unit.unit_type.value} failed to move to {new_position} (occupied); cancelling movement."
+                    )
+                    self.combat_log.append(fail_event)
+
+                    # Clear any pending move actions for this unit in the queue (cancel animations)
+                    for pending in list(self.action_queue):
+                        if pending.unit.id == action.unit.id: #and pending.action_type == CombatAction.MOVE:
+                            pending.action_type = CombatAction.WAIT
+                            pending.start_position = None
+                            # update description and keep in queue as a WAIT so it resolves fairly
+                            pending.description = f"Cancelled move to {pending.target_position} (tile occupied)"
+                            cancel_event = CombatEvent(
+                                frame_number=self.frame_number,
+                                attacker=pending.unit,
+                                target=None,
+                                action=CombatAction.WAIT,
+                                description=f"Cancelled pending move for {pending.unit.unit_type.value} to {pending.target_position}"
+                            )
+                            self.combat_log.append(cancel_event)
     
     def _cleanup_dead_units(self, all_units: List[Unit]):
         """Remove dead units from the board and log deaths."""
@@ -451,7 +483,7 @@ class CombatEngine:
             if not unit.is_alive() and unit.position:
                 # Log death
                 death_event = CombatEvent(
-                    round_number=self.round_number,
+                    frame_number=self.frame_number,
                     attacker=None,
                     target=unit,
                     action=CombatAction.WAIT,
@@ -504,7 +536,7 @@ class CombatEngine:
     def get_combat_summary(self) -> Dict:
         """Get summary of the combat."""
         return {
-            "total_rounds": self.round_number,
+            "total_frames": self.frame_number,
             "total_events": len(self.combat_log),
             "events": self.combat_log,
             "combat_seed": self.combat_seed,

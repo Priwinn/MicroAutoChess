@@ -1,9 +1,11 @@
 # from numba.experimental import jitclass
 # from src.core.units import Unit
-from src.core.constant_types import DamageType
+from constant_types import DamageType
+from damage import Damage
 from typing import *
-
-
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from units import Unit
 
 class AbstractSpell:
     def __init__(self, name: str):
@@ -18,7 +20,7 @@ class AbstractSpell:
         """Prepare the spell for execution. Can be used to find the target of the spell."""
         raise NotImplementedError("Subclasses must implement this method")
 
-    def execute(self, source, board, crit_rate: float = 0.0, crit_dmg: float = 0.0, can_crit: bool = False, crit_roll: float = 0.0):
+    def execute(self, source, board, frame_number: int, crit_rate: float = 0.0, crit_dmg: float = 0.0, can_crit: bool = False, crit_roll: float = 0.0):
         """Execute the spell on the target unit."""
         raise NotImplementedError("Subclasses must implement this method")
 
@@ -41,19 +43,22 @@ class FireballSpell(AbstractSpell):
         return True
 
 
-    def execute(self, source, board, crit_rate: float = 0.0, crit_dmg: float = 0.0, can_crit: bool = False, crit_roll: float = 0.0):
+    def execute(self, source, board, frame_number: int, crit_rate: float = 0.0, crit_dmg: float = 0.0, can_crit: bool = False, crit_roll: float = 0.0):
         """Execute the fireball spell. Deal damage to the target unit and  adjacent units take half damage."""
+
         if self.target and self.target.is_alive():
             damage = self.damage*source.base_stats.spell_power
             if can_crit and crit_roll < crit_rate:
                 damage *= crit_dmg
-            self.target.take_damage(damage, DamageType.MAGICAL)
+            damage_obj = Damage(value=damage, crit=(can_crit and crit_roll < crit_rate), dmg_type=DamageType.MAGICAL, frame_number=frame_number)
+            self.target.take_damage(damage_obj, source=source, spell_name=self.name)
             for adjacent in board.get_adjacent_cells(self.target.position):
                 # TODO: deal with planned cells and movement
+                # right now moving units are still in the original cell during spell execution
                 if not adjacent.is_empty() and not adjacent.is_planned() \
                     and adjacent.unit.is_alive() and adjacent.unit != self.target and adjacent.unit.team == self.target.team:
-                    adjacent.unit.take_damage(damage/2, DamageType.MAGICAL)
-
+                    damage_obj = Damage(value=damage/2, crit=(can_crit and crit_roll < crit_rate), dmg_type=DamageType.MAGICAL, frame_number=frame_number)
+                    adjacent.unit.take_damage(damage_obj, source=source, spell_name=self.name)
             # print(f"Casted {self.name} on {target.unit_type.value} for {mitigated_damage} damage.")
         else:
             print(f"Target {self.target.unit_type.value} is already defeated.")
@@ -69,11 +74,12 @@ class SelfHealSpell(AbstractSpell):
         self.target = source
         return True
 
-    def execute(self, source, board, crit_rate: float = 0.0, crit_dmg: float = 0.0, can_crit: bool = False, crit_roll: float = 0.0):
+    def execute(self, source, board, frame_number: int, crit_rate: float = 0.0, crit_dmg: float = 0.0, can_crit: bool = False, crit_roll: float = 0.0):
         """Execute the heal spell."""
         if self.target.is_alive():
             heal_amount = self.heal_amount * source.base_stats.spell_power
-            source.heal(heal_amount)
+            damage_obj = Damage(value=heal_amount, crit=False, frame_number=frame_number, heal=True)
+            source.heal(damage_obj, source=source, spell_name=self.name)
             # print(f"{source.unit_type.value} casted {self.name} on {source.unit_type.value} for {heal_amount} health.")
         else:
             print(f"Target {self.target.unit_type.value} is already defeated.")
@@ -99,7 +105,7 @@ class AssassinBlinkSpell(AbstractSpell):
         self.target = weakest_enemy
         return weakest_enemy is not None
 
-    def execute(self, source, board, crit_rate: float = 0.0, crit_dmg: float = 0.0, can_crit: bool = False, crit_roll: float = 0.0):
+    def execute(self, source, board, frame_number: int, crit_rate: float = 0.0, crit_dmg: float = 0.0, can_crit: bool = False, crit_roll: float = 0.0):
         """Execute the blink spell."""
 
 
@@ -120,7 +126,8 @@ class AssassinBlinkSpell(AbstractSpell):
                     board.move_unit(source.position, valid_positions[0])
             # Deal damage to the weakest enemy
             damage = self.damage * source.base_stats.spell_power
-            self.target.take_damage(damage, DamageType.PHYSICAL)
+            damage_obj = Damage(value=damage, crit=False, dmg_type=DamageType.PHYSICAL, frame_number=frame_number)
+            self.target.take_damage(damage_obj, source=source, spell_name=self.name)
             #Change source's target to the weakest enemy
             source.current_target = self.target
             
@@ -139,7 +146,7 @@ class AttackSpeedBuffSpell(AbstractSpell):
         self.target = source
         return True
 
-    def execute(self, source, board, crit_rate: float = 0.0, crit_dmg: float = 0.0, can_crit: bool = False, crit_roll: float = 0.0):
+    def execute(self, source, board, frame_number: int, crit_rate: float = 0.0, crit_dmg: float = 0.0, can_crit: bool = False, crit_roll: float = 0.0):
         """Execute the attack speed buff spell."""
         if self.target.is_alive():
             source.buffs["attack_speed"] = source.buffs.get("attack_speed", 1.0) + self.buff_amount

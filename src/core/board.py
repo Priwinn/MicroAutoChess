@@ -13,7 +13,7 @@ from queue import PriorityQueue
 
 # from src.numba_classes.numba_pq import PurePythonPriorityQueue as PriorityQueue
 # from src.numba_classes.numba_pq import PriorityQueue as PriorityQueue
-from src.core.units import Unit, UnitType
+from units import Unit, UnitType
 
 
 
@@ -390,6 +390,17 @@ class HexBoard(Board):
                     cell = self.get_cell((x, y))
                     if cell:
                         results.append(cell)
+        return results
+    
+    def get_positions_in_l1_range(self, position: Tuple[int, int], l1_range: int) -> List[Tuple[int, int]]:
+        """Get all positions within a certain amount of steps from a position in hexagonal grid."""
+        results = []
+        (q0, r0) = oddr_to_axial(position)
+        for q in range(-l1_range, l1_range + 1):
+            for r in range(max(-l1_range, -q - l1_range), min(l1_range, -q + l1_range) + 1):
+                x,y = axial_to_oddr((q0 + q, r0 + r))
+                if self.is_valid_position((x, y)):
+                    results.append((x, y))
         return results
 
     def create_hex_cell(self, content=""):

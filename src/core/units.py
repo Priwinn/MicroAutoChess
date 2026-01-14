@@ -9,9 +9,12 @@ import numpy as np
 import random
 # from numba.experimental import jitclass
 # from numba import float32
-from src.core.spells import AbstractSpell, FireballSpell, AttackSpeedBuffSpell, SelfHealSpell, AssassinBlinkSpell
-from src.core.constant_types import UnitType, UnitRarity, DamageType
+from damage import Damage
+from spells import AbstractSpell, FireballSpell, AttackSpeedBuffSpell, SelfHealSpell, AssassinBlinkSpell
+from constant_types import CombatAction, CombatEventType, UnitType, UnitRarity, DamageType
 from itertools import count
+import global_log
+from combat_event import CombatEvent
 
 
 
@@ -86,7 +89,7 @@ class Unit:
     def _get_default_stats(self) -> UnitStats:
         """Get default stats based on unit type."""
         stat_templates = {
-            UnitType.WARRIOR: UnitStats(health=1000, attack=75, spell_power=1, defense=40, resistance=40, range=1),
+            UnitType.WARRIOR: UnitStats(health=1200, attack=75, spell_power=1, defense=40, resistance=40, range=1),
             UnitType.ARCHER: UnitStats(health=700, attack=60, spell_power=1, defense=20, resistance=20, range=4, max_mana=75, spell=AttackSpeedBuffSpell(), attack_speed= 1.0),
             UnitType.MAGE: UnitStats(health=600, attack=40, spell_power=1, defense=20, resistance=20, range=4, max_mana=50),
             UnitType.TANK: UnitStats(health=1500, attack=60, spell_power=1, defense=60, resistance=60, range=1, spell= SelfHealSpell(), attack_speed= 0.8),
@@ -128,24 +131,58 @@ class Unit:
         """Check if unit is alive."""
         return self.current_health > 0
 
-    def take_damage(self, damage: float, dmg_type: DamageType = DamageType.PHYSICAL) -> float:
+    # TODO LOG COMBAT EVENTS HERE
+    def take_damage(self, damage_obj: Damage, source: 'Unit' = None, spell_name: str = "") -> float:
         """Apply damage to unit, returns actual damage taken."""
-        self.premigitation_mana(damage)
-        if dmg_type == DamageType.PHYSICAL:
-            mitigated_damage = max(1, damage * 100 / (100 + self.get_defense()))
-        elif dmg_type == DamageType.MAGICAL:
-            mitigated_damage = max(1, damage * 100 / (100 + self.get_resistance()))
-        elif dmg_type == DamageType.TRUE:
-            mitigated_damage = damage
+        if damage_obj.heal:
+            raise ValueError("Damage object indicates healing, use heal() method instead.")
+        self.premigitation_mana(damage_obj.value)
+        # mitigated_damage = 0
+        if damage_obj.dmg_type == DamageType.PHYSICAL:
+            mitigated_damage = max(1, damage_obj.value * 100 / (100 + self.get_defense()))
+        elif damage_obj.dmg_type == DamageType.MAGICAL:
+            mitigated_damage = max(1, damage_obj.value * 100 / (100 + self.get_resistance()))
+        elif damage_obj.dmg_type == DamageType.TRUE:
+            mitigated_damage = damage_obj.value
+        if (type(damage_obj.dmg_type) is not DamageType) :
+            global_log.log_error(f"Damage type error: {damage_obj.dmg_type} is not of type DamageType")
         actual_damage = min(mitigated_damage, self.current_health)
         self.current_health -= actual_damage
         self.postmigitation_mana(actual_damage)
+        combat_event = CombatEvent(
+            frame_number=damage_obj.frame_number,  # This should be set by the combat engine
+            source=source,
+            target=self,
+            event_type=CombatEventType.DAMAGE_DEALT,
+            spell_name=spell_name if spell_name else None,
+            damage=actual_damage,
+            crit_bool=damage_obj.crit,
+            position=self.position,
+            description=f"{source.unit_type.value if source else 'Unknown'} dealt {actual_damage} {damage_obj.dmg_type.value} damage to {self.unit_type.value}{' with a crit' if damage_obj.crit else ''}.",
+            match_id=None
+        )
+        global_log.combat_log.append(combat_event)
         return actual_damage
 
-    def heal(self, amount: float):
+    def heal(self, damage_obj: Damage, source: 'Unit' = None, spell_name: str = "") -> None:
         """Heal the unit."""
+        if not damage_obj.heal:
+            raise ValueError("Damage object does not indicate healing, use take_damage() method instead.")
         max_health = self.get_max_health()
-        self.current_health = min(max_health, self.current_health + amount)
+        self.current_health = min(max_health, self.current_health + damage_obj.value)
+        combat_event = CombatEvent(
+            frame_number=0,  # This should be set by the combat engine
+            source=source,
+            target=self,
+            event_type=CombatEventType.HEALING_DONE,
+            spell_name=spell_name,
+            damage=damage_obj.value,
+            crit_bool=False,
+            position=self.position,
+            description=f"{self.unit_type.value} healed for {damage_obj.value} health.",
+            match_id=None
+        )
+        global_log.combat_log.append(combat_event)
 
     def get_basic_final_damage(self, crit_roll: float) -> Tuple[float, bool]:
         """

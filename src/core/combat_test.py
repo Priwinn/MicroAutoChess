@@ -6,9 +6,10 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from src.core.units import Unit, UnitType, UnitRarity, UnitStats
-from src.core.board import Board, HexBoard
-from src.core.combat import CombatEngine, CombatEvent, CombatAction
+from constant_types import CombatEventType
+from units import Unit, UnitType, UnitRarity, UnitStats
+from board import Board, HexBoard
+from combat import CombatEngine, CombatEvent, CombatAction
 import time
 
 
@@ -51,9 +52,9 @@ class CombatVisualizer:
                 current_frame = event.frame_number
                 print(f"\n--- frame {current_frame} ---")
             
-            if event.action == CombatAction.ATTACK:
+            if event.event_type == CombatEventType.DAMAGE_DEALT and event.spell_name == "BasicAttack":
                 print(f"  ⚔️  {event.description}")
-            elif event.action == CombatAction.MOVE:
+            elif event.event_type == CombatEventType.MOVE_EXECUTED:
                 print(f"  🏃 {event.description}")
             elif "defeated" in event.description.lower():
                 print(f"  💀 {event.description}")
@@ -65,7 +66,7 @@ def create_mock_units():
     """Create mock units for combat demonstration."""
     
     # Define unit types for team 1
-    unit_types = [UnitType.WARRIOR, UnitType.ARCHER, UnitType.TANK, UnitType.ASSASSIN]
+    unit_types = [UnitType.TANK, UnitType.ARCHER, UnitType.TANK, UnitType.ARCHER]
     
     # Create Team 1 Units (uppercase symbols)
     team1_units = []
@@ -175,8 +176,8 @@ def run_combat_demonstration(debug: bool = False, combat_seed: int = 42):
         print(f"📊 Total Events: {summary['total_events']}")
     
         # Analyze the combat
-        attack_count = sum(1 for e in summary['events'] if e.action == CombatAction.ATTACK)
-        move_count = sum(1 for e in summary['events'] if e.action == CombatAction.MOVE)
+        attack_count = sum(1 for e in summary['events'] if e.event_type == CombatEventType.DAMAGE_DEALT and e.spell_name == "BasicAttack")
+        move_count = sum(1 for e in summary['events'] if e.event_type == CombatEventType.MOVE_EXECUTED)
         total_damage = sum(e.damage for e in summary['events'] if e.damage > 0)
         
         print(f"⚔️  Total Attacks: {attack_count}")
@@ -237,11 +238,11 @@ def interactive_step_by_step():
         if frame_events:
             print(f"\nframe {frame_num} Events:")
             for event in frame_events:
-                if event.action_type == CombatAction.ATTACK:
+                if event.event_type == CombatEventType.DAMAGE_DEALT:
                     print(f"  ⚔️  {event.description}")
-                elif event.action_type == CombatAction.MOVE:
+                elif event.event_type == CombatEventType.MOVE_EXECUTED:
                     print(f"  🏃 {event.description}")
-                elif event.action_type == CombatAction.CAST_SPELL:
+                elif event.event_type == CombatEventType.SPELL_EXECUTED:
                     print(f"  ✨ {event.description}")
                 elif "defeated" in event.description.lower():
                     print(f"  💀 {event.description}")

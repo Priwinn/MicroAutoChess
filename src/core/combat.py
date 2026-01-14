@@ -4,6 +4,8 @@ Combat simulation engine for auto chess battles.
 
 import numpy as np
 from typing import List, Tuple, Dict, Optional, Set
+from damage import Damage
+from constant_types import DamageType, CombatAction, CombatEventType
 from spells import AbstractSpell
 from dataclasses import dataclass
 from enum import Enum
@@ -12,32 +14,12 @@ import math
 # from numba import jit
 # from numba.experimental import jitclass
 
-from src.core.board import Board
-from src.core.units import Unit, UnitType
+from board import Board
+from units import Unit, UnitType
+from combat_event import CombatEvent
+import global_log
 # from src.core.player import Player
 # from src.core.spells import AbstractSpell, FireballSpell, SelfHealSpell
-
-
-class CombatAction(Enum):
-    MOVE = "move"
-    ATTACK = "attack"
-    CAST_SPELL = "cast_spell"
-    WAIT = "wait"
-
-
-@dataclass
-class CombatEvent:
-    """Represents an event during combat."""
-    frame_number: int
-    attacker: Optional[Unit]
-    target: Optional[Unit]
-    action_type: CombatAction
-    spell_instance: Optional[AbstractSpell] = None
-    damage: float = 0
-    crit_bool: bool = False
-    position: Optional[Tuple[int, int]] = None
-    description: str = ""
-
 
 @dataclass
 class PlannedAction:
@@ -82,7 +64,7 @@ class CombatEngine:
     
     def __init__(self, board: Board, combat_seed: Optional[int] = None, action_timing: Optional[ActionTiming] = None):
         self.board = board
-        self.combat_log: List[CombatEvent] = []
+        self.combat_log: List[CombatEvent] = global_log.combat_log
         self.frame_number = 0
         self.max_frames = 500  # Prevent infinite combat
         
@@ -127,9 +109,7 @@ class CombatEngine:
         if self.combat_seed is not None:
             start_event = CombatEvent(
                 frame_number=0,
-                attacker=None,
-                target=None,
-                action_type=CombatAction.WAIT,
+                event_type=CombatEventType.START_EVENT,
                 description=f"Combat started with seed: {self.combat_seed}, Action timing: {self.action_timing}"
             )
             self.combat_log.append(start_event)
@@ -251,9 +231,10 @@ class CombatEngine:
                     # Log action planning
                     plan_event = CombatEvent(
                         frame_number=self.frame_number,
-                        attacker=action.unit,
+                        source=action.unit,
                         target=action.target,
-                        action_type=action.action_type,
+                        event_type=CombatEventType.ACTION_PLANNED,
+                        spell_name=action.spell_instance.name if action.spell_instance is not None else None,
                         description=f"{action.unit.unit_type.value} plans {action.action_type.value} to {action.target_position if action.target_position else action.target} (resolves in frame {action.resolution_frame})"
                     )
                     self.combat_log.append(plan_event)
@@ -273,9 +254,9 @@ class CombatEngine:
                         # Log the conflict resolution
                         conflict_event = CombatEvent(
                             frame_number=self.frame_number,
-                            attacker=action.unit,
+                            source=action.unit,
                             target=None,
-                            action_type=CombatAction.WAIT,
+                            event_type=CombatEventType.CONFLICT_RESOLVED,
                             description=f"Movement plan conflict at {pos}: {action.unit.unit_type.value} was set to WAIT."
                         )
                         self.combat_log.append(conflict_event)
@@ -283,9 +264,9 @@ class CombatEngine:
                 # Log conflict resolution
                 conflict_event = CombatEvent(
                     frame_number=self.frame_number,
-                    attacker=None,
+                    source=chosen_action.unit,
                     target=None,
-                    action_type=CombatAction.MOVE,
+                    event_type=CombatEventType.CONFLICT_RESOLVED,
                     position=pos,
                     description=f"Movement plan conflict at {pos}: {chosen_action.unit.unit_type.value} was randomly chosen to be resolved."
                 )
@@ -395,9 +376,9 @@ class CombatEngine:
                 # Log failed attack
                 event = CombatEvent(
                     frame_number=self.frame_number,
-                    attacker=action.unit,
+                    event_type=CombatEventType.FAILED_ATTACK,
+                    source=action.unit,
                     target=action.target,
-                    action_type=CombatAction.ATTACK,
                     description=f"Attack from {action.unit.unit_type.value} fails (target dead)" #TODO: might want to retarget to a different unit if possible (see fizzling)
                 )
                 self.combat_log.append(event)
@@ -407,26 +388,18 @@ class CombatEngine:
             action.unit.add_basic_attack_mana()
             # Apply damage to the target
             premitigated_basic_damage, crit_bool = action.unit.get_basic_final_damage(self.rng.random())
-            actual_damage = action.target.take_damage(premitigated_basic_damage)
+            damage_obj = Damage(value=premitigated_basic_damage, crit=crit_bool, dmg_type=DamageType.PHYSICAL, 
+                                frame_number=self.frame_number, 
+                                source_unit_id=action.unit.id, target_unit_id=action.target.id, spell_name="BasicAttack")
+            action.target.take_damage(damage_obj, source=action.unit, spell_name="BasicAttack")
             
-            # Log each attack separately
-            event = CombatEvent(
-                frame_number=self.frame_number,
-                attacker=action.unit,
-                target=action.target,
-                action_type=CombatAction.ATTACK,
-                damage=actual_damage,
-                crit_bool=crit_bool,
-                description=f"{action.unit.unit_type.value} deals {actual_damage} damage to {action.target.unit_type.value} (planned in frame {action.planned_frame})"
-            )
-            self.combat_log.append(event)  
     
     def _execute_spells_simultaneously(self, spell_actions: List[PlannedAction]):
         """Execute all planned spells simultaneously."""
         for action in spell_actions:
             if not action.unit.is_alive() or not action.target or not action.target.is_alive():
                 continue
-            action.unit.base_stats.spell.execute(action.unit, self.board, 
+            action.unit.base_stats.spell.execute(action.unit, self.board, self.frame_number,
                                        crit_rate=action.unit.base_stats.crit_rate, 
                                        crit_dmg=action.unit.base_stats.crit_dmg, 
                                        can_crit=action.unit.spell_crit, 
@@ -435,9 +408,10 @@ class CombatEngine:
 
             event = CombatEvent(
                 frame_number=self.frame_number,
-                attacker=action.unit,
+                source=action.unit,
                 target=action.target,
-                action_type=CombatAction.CAST_SPELL,
+                event_type=CombatEventType.SPELL_EXECUTED,
+                spell_name=action.unit.base_stats.spell.name,
                 description=f"{action.unit.unit_type.value} casts a {action.unit.base_stats.spell.name} spell (planned in frame {action.planned_frame})"
             )
             self.combat_log.append(event)
@@ -458,9 +432,9 @@ class CombatEngine:
                 if moved:
                     event = CombatEvent(
                         frame_number=self.frame_number,
-                        attacker=action.unit,
+                        source=action.unit,
                         target=None,
-                        action_type=CombatAction.MOVE,
+                        event_type=CombatEventType.MOVE_EXECUTED,
                         position=new_position,
                         description=f"{action.unit.unit_type.value} moves to {new_position} (planned in frame {action.planned_frame})"
                     )
@@ -469,9 +443,9 @@ class CombatEngine:
                     # Movement failed (target occupied). Cancel any future/related move animations for this unit.
                     fail_event = CombatEvent(
                         frame_number=self.frame_number,
-                        attacker=action.unit,
+                        source=action.unit,
                         target=None,
-                        action_type=CombatAction.WAIT,
+                        event_type=CombatEventType.FAILED_MOVE,
                         position=new_position,
                         description=f"{action.unit.unit_type.value} failed to move to {new_position} (occupied); cancelling movement."
                     )
@@ -482,16 +456,7 @@ class CombatEngine:
                         if pending.unit.id == action.unit.id: #and pending.action_type == CombatAction.MOVE:
                             pending.action_type = CombatAction.WAIT
                             pending.start_position = None
-                            # update description and keep in queue as a WAIT so it resolves fairly
                             pending.description = f"Cancelled move to {pending.target_position} (tile occupied)"
-                            cancel_event = CombatEvent(
-                                frame_number=self.frame_number,
-                                attacker=pending.unit,
-                                target=None,
-                                action_type=CombatAction.WAIT,
-                                description=f"Cancelled pending move for {pending.unit.unit_type.value} to {pending.target_position}"
-                            )
-                            self.combat_log.append(cancel_event)
     
     def _cleanup_dead_units(self, all_units: List[Unit]):
         """Remove dead units from the board and log deaths."""
@@ -500,9 +465,9 @@ class CombatEngine:
                 # Log death
                 death_event = CombatEvent(
                     frame_number=self.frame_number,
-                    attacker=None,
+                    source=None,
                     target=unit,
-                    action_type=CombatAction.WAIT,
+                    event_type=CombatEventType.UNIT_DIED,
                     description=f"{unit.unit_type.value} is defeated!"
                 )
                 self.combat_log.append(death_event)

@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: Visualize Combat",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/core/visualize_combat.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false
+    }
+  ]
+}

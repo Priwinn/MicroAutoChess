@@ -2,7 +2,9 @@ import math
 import random
 import pygame
 from typing import Tuple
-from src.core.combat import CombatAction, CombatEngine
+from collections import defaultdict
+from combat import CombatEngine
+from constant_types import CombatAction, CombatEventType
 
 
 def oddr_to_axial(position: Tuple[int, int]) -> Tuple[int, int]:
@@ -36,7 +38,7 @@ class PygameBoardVisualizer:
     Draws hex cells, unit icons, health bars and mana bars.
     """
 
-    def __init__(self, board, cell_radius: int = 28, margin: int = 16):
+    def __init__(self, board, render_fps: int = 60, cell_radius: int = 28, margin: int = 16):
         pygame.font.init()
         self.board = board
         self.cell_radius = cell_radius
@@ -45,9 +47,12 @@ class PygameBoardVisualizer:
         self.grid_color = (80, 80, 80)
         self.team_colors = {1: (60, 140, 220), 2: (220, 100, 100)}
         self.font = pygame.font.SysFont('Arial', max(12, int(cell_radius * 0.6)))
+        self.render_fps = render_fps
 
         # Estimate window size
-        w = int(cell_radius * math.sqrt(3) * (self.board.width + 0.5)) + margin * 2
+        # reserve extra space to the right for charts / debug panels
+        self.right_panel_width = max(320, int(self.cell_radius * 6))
+        w = int(cell_radius * math.sqrt(3) * (self.board.width + 0.5)) + margin * 2 + self.right_panel_width
         h = int(cell_radius * 1.5 * (self.board.height + 1)) + margin * 2
         self.window_size = (w, h)
         # Add extra left offset so the grid doesn't sit flush to the window edge
@@ -59,9 +64,19 @@ class PygameBoardVisualizer:
         self.clock = pygame.time.Clock()
         # Floating combat text state
         self._seen_events = set()
-        self.floating_texts = []  # list of (x,y,text,start_time,duration)
+        self.floating_texts = []
+        # AoE spell animations: list of [cx, cy, radius, start_time, duration, color]
+        self.aoe_animations = []
+        # Spin animations for units planning spells: list of [unit_id, start_time, duration, speed]
+        self.spin_animations = []
+        # Particles for spell effects: list of [x0,y0,vx,vy,start,lifetime,color,size]
+        self.particles = []
+        # damage done per unit id
+        self.damage_done = defaultdict(float)
         # smaller font for damage numbers
         self.damage_font = pygame.font.SysFont('Arial', max(10, int(cell_radius * 0.5)))
+        # store lightweight unit info (symbol, team) so dead units can still be shown in charts
+        self.unit_info = {}
 
     def draw_board(self, engine: CombatEngine = None, sim_frame: int = 0, sim_progress: float = 0.0):
         """Draw board and optionally animate pending move actions from engine.
@@ -126,6 +141,56 @@ class PygameBoardVisualizer:
             # Collect damage events from engine combat log and create floating texts
             now = pygame.time.get_ticks() / 1000.0
             for ev in engine.combat_log:
+                # Spell planning -> start spin animation
+                if getattr(ev, 'event_type', None) == CombatEventType.ACTION_PLANNED and getattr(ev, 'spell_name', None) and id(ev) not in self._seen_events:
+                    source = getattr(ev, 'source', None)
+                    if source is not None and getattr(source, 'id', None) is not None:
+                        spin_duration = 0.6
+                        spin_speed = 360.0/spin_duration  # degrees per second
+                        self.spin_animations.append([source.id, now, spin_duration, spin_speed])
+                        self._seen_events.add(id(ev))
+                # Spell execution: Fireball AoE
+                if ev.event_type == CombatEventType.SPELL_EXECUTED and ev.spell_name == 'Fireball'and id(ev) not in self._seen_events:
+                    pos = getattr(ev, 'position', None)
+                    if pos is None and getattr(ev, 'target', None) and getattr(ev.target, 'position', None):
+                        pos = ev.target.position
+                    if pos is not None:
+                        # store AoE as board position + hex radius (1 => adjacent cells)
+                        radius_hex = 1
+                        duration = 0.6
+                        # choose color from source team if available, otherwise default red
+                        team = ev.source.team
+                        color = self.team_colors.get(team, (200, 40, 40))
+                        self.aoe_animations.append([pos, radius_hex, now, duration, color])
+                        self._seen_events.add(id(ev))
+
+                # Particle effect for Attack Speed Buff
+                if ev.event_type == CombatEventType.SPELL_EXECUTED and ev.spell_name == 'Attack Speed Buff' and id(ev) not in self._seen_events:
+                    src = getattr(ev, 'source', None)
+                    if src is not None and getattr(src, 'position', None):
+                        q, r = oddr_to_axial(src.position)
+                        px, py = hex_to_pixel(q, r, self.cell_radius)
+                        cx = int(px + self.left_offset + self.margin)
+                        cy = int(py + self.margin + self.cell_radius + 4)
+                        # emit particles around source
+                        team = getattr(src, 'team', None)
+                        base_color = self.team_colors.get(team, (200, 200, 50))
+                        # Bigger burst: more particles, larger sizes, longer life and a soft glow
+                        num_particles = 40
+                        for i in range(num_particles):
+                            ang = (2 * math.pi * i / num_particles) + random.uniform(-0.4, 0.4)
+                            speed = random.uniform(self.cell_radius * 0.8, self.cell_radius * 2.2)
+                            vx = math.cos(ang) * speed
+                            vy = math.sin(ang) * speed
+                            lifetime = random.uniform(0.7, 1.6)
+                            size = random.randint(4, 7)
+                            # slightly vary color brightness
+                            color = (min(255, int(base_color[0] * random.uniform(0.9, 1.4))),
+                                     min(255, int(base_color[1] * random.uniform(0.9, 1.4))),
+                                     min(255, int(base_color[2] * random.uniform(0.9, 1.4))))
+                            self.particles.append([cx, cy, vx, vy, now, lifetime, color, size])
+                        self._seen_events.add(id(ev))
+
                 if getattr(ev, 'damage', 0) and ev.damage > 0 and id(ev) not in self._seen_events:
                     # Determine position to display damage: prefer explicit position, then target position
                     pos = None
@@ -133,6 +198,20 @@ class PygameBoardVisualizer:
                         pos = ev.position
                     elif getattr(ev, 'target', None) and getattr(ev.target, 'position', None):
                         pos = ev.target.position
+
+                    # accumulate damage done by source (for damage meter)
+                    src = getattr(ev, 'source', None)
+                    if src is not None and getattr(src, 'id', None) is not None:
+                            try:
+                                self.damage_done[src.id] += float(ev.damage)
+                                # remember unit symbol/team for charts even if unit later dies
+                                try:
+                                    self.unit_info[src.id] = {'symbol': src._get_unit_symbol(), 'team': getattr(src, 'team', None)}
+                                except Exception:
+                                    # best-effort: ignore if unit lacks helpers
+                                    pass
+                            except Exception:
+                                pass
 
                     if pos is not None:
                         q, r = oddr_to_axial(pos)
@@ -157,7 +236,12 @@ class PygameBoardVisualizer:
                         speed = self.cell_radius * random.uniform(1.2, 1.6)
                         vx = math.cos(theta) * speed
                         vy = math.sin(theta) * speed
-                        self.floating_texts.append([x0, y0, txt, now, duration, vx, vy])
+                        # Choose color based on event type (green for healing, orange for damage)
+                        if getattr(ev, 'event_type', None) == CombatEventType.HEALING_DONE:
+                            txt_color = (50, 200, 100)
+                        else:
+                            txt_color = (255, 140, 0)
+                        self.floating_texts.append([x0, y0, txt, now, duration, vx, vy, txt_color])
                         self._seen_events.add(id(ev))
 
             # If any pending action for a unit was cancelled (converted to WAIT and start_position cleared),
@@ -195,9 +279,24 @@ class PygameBoardVisualizer:
 
                     # Unit symbol
                     symbol = unit._get_unit_symbol()
+                    # Check for active spin for this unit
+                    angle = 0.0
+                    for s in list(self.spin_animations):
+                        uid, start, duration, speed = s
+                        if uid == unit.id:
+                            elapsed = now - start
+                            if elapsed <= duration:
+                                angle = (elapsed * speed) % 360.0
+                            else:
+                                self.spin_animations.remove(s)
                     text_surf = self.font.render(symbol, True, (255, 255, 255))
-                    text_rect = text_surf.get_rect(center=(center_x, center_y))
-                    self.screen.blit(text_surf, text_rect)
+                    if angle != 0.0:
+                        rot = pygame.transform.rotate(text_surf, angle)
+                        rrect = rot.get_rect(center=(center_x, center_y))
+                        self.screen.blit(rot, rrect)
+                    else:
+                        text_rect = text_surf.get_rect(center=(center_x, center_y))
+                        self.screen.blit(text_surf, text_rect)
 
                     # Health bar (above) - slightly smaller than before
                     bar_w = int(self.cell_radius * 1.2)
@@ -224,9 +323,24 @@ class PygameBoardVisualizer:
             color = self.team_colors.get(team, (200, 200, 200))
             pygame.draw.circle(self.screen, color, (ix, iy), int(self.cell_radius * 0.45))
             symbol = unit._get_unit_symbol()
+            # Check for active spin for this unit (moving units can also spin)
+            angle = 0.0
+            for s in list(self.spin_animations):
+                uid, start, duration, speed = s
+                if uid == unit.id:
+                    elapsed = now - start
+                    if elapsed <= duration:
+                        angle = (elapsed * speed) % 360.0
+                    else:
+                        self.spin_animations.remove(s)
             text_surf = self.font.render(symbol, True, (255, 255, 255))
-            text_rect = text_surf.get_rect(center=(ix, iy))
-            self.screen.blit(text_surf, text_rect)
+            if angle != 0.0:
+                rot = pygame.transform.rotate(text_surf, angle)
+                rrect = rot.get_rect(center=(ix, iy))
+                self.screen.blit(rot, rrect)
+            else:
+                text_rect = text_surf.get_rect(center=(ix, iy))
+                self.screen.blit(text_surf, text_rect)
 
             bar_w = int(self.cell_radius * 1.2)
             bar_h = max(3, int(self.cell_radius * 0.12))
@@ -240,6 +354,8 @@ class PygameBoardVisualizer:
             max_mana = getattr(unit.base_stats, 'max_mana', 0) or 1
             mana_ratio = max(0.0, min(1.0, unit.current_mana / max_mana))
             pygame.draw.rect(self.screen, (80, 140, 220), (hb_x, mb_y, int(bar_w * mana_ratio), bar_h))
+            # Damage meter for moving unit
+            # (inline damage meter removed; consolidated charts to the right)
 
         # Draw attack animations on top (lines from attacker toward target)
         if engine is not None:
@@ -252,12 +368,145 @@ class PygameBoardVisualizer:
                 # projectile dot at tip
                 pygame.draw.circle(self.screen, (255, 255, 255), (int(tx), int(ty)), max(2, int(self.cell_radius * 0.08)))
 
-        # Draw floating damage texts and remove expired
+        # Draw floating damage texts and AoE animations, remove expired
         now = pygame.time.get_ticks() / 1000.0
+        # AoE animations
+        aoe_remaining = []
+        for aoe in self.aoe_animations:
+            pos, radius_hex, start, duration, color = aoe
+            elapsed = now - start
+            if elapsed <= duration:
+                alpha = max(0, min(200, int(200 * (1.0 - elapsed / duration))))
+                # draw hex filled polygons for each position in l1 range
+                # Use hex-aware API to get cells in range (returns BoardCell objects)
+                cells = self.board.get_cells_in_l1_range(pos, radius_hex)
+                positions = [c.position for c in cells]
+                surf = pygame.Surface(self.window_size, pygame.SRCALPHA)
+                for p in positions:
+                    q, r = oddr_to_axial(p)
+                    px, py = hex_to_pixel(q, r, self.cell_radius)
+                    center_x = int(px + self.left_offset + self.margin)
+                    center_y = int(py + self.margin + self.cell_radius + 4)
+                    corners = polygon_corners(center_x, center_y, self.cell_radius)
+                    int_corners = [(int(x), int(y)) for x, y in corners]
+                    pygame.draw.polygon(surf, (color[0], color[1], color[2], alpha), int_corners)
+                self.screen.blit(surf, (0, 0))
+                aoe_remaining.append(aoe)
+        self.aoe_animations = aoe_remaining
+
+        # Update and draw particles
+        particle_remaining = []
+        for p in self.particles:
+            x0, y0, vx, vy, start, lifetime, color, size = p
+            elapsed = now - start
+            if elapsed <= lifetime:
+                cur_x = x0 + vx * elapsed
+                cur_y = y0 + vy * elapsed
+                alpha = max(0, min(255, int(255 * (1.0 - elapsed / lifetime))))
+                # soft glow behind particle
+                glow_size = int(size * 2.5)
+                glow_alpha = max(0, min(220, int(alpha * 0.6)))
+                glow_surf = pygame.Surface((glow_size*2, glow_size*2), pygame.SRCALPHA)
+                pygame.draw.circle(glow_surf, (color[0], color[1], color[2], glow_alpha), (glow_size, glow_size), glow_size)
+                self.screen.blit(glow_surf, (int(cur_x - glow_size), int(cur_y - glow_size)))
+                # bright core
+                core_surf = pygame.Surface((size*2, size*2), pygame.SRCALPHA)
+                core_alpha = alpha
+                pygame.draw.circle(core_surf, (255, 255, 255, core_alpha), (size, size), size)
+                self.screen.blit(core_surf, (int(cur_x - size), int(cur_y - size)))
+                particle_remaining.append(p)
+        self.particles = particle_remaining
+
+        # Draw two damage charts (one per team) side-by-side to the right of the board
+        if engine is not None and self.damage_done:
+            # per-chart width and spacing
+            each_w = max(140, int(self.window_size[0] * 0.12))
+            spacing = 10
+            total_w = each_w * 2 + spacing
+            chart_x = self.window_size[0] - total_w - self.margin
+            chart_y = self.margin
+            chart_h = self.window_size[1] - 2 * self.margin
+
+            # background panel covering both charts
+            pygame.draw.rect(self.screen, (40, 40, 40), (chart_x, chart_y, total_w, chart_h))
+            # main title above the charts
+            title_surf = self.font.render('Damage Meter', True, (230, 230, 230))
+            self.screen.blit(title_surf, (chart_x + 8, chart_y + 6))
+
+            # gather units from board and update unit_info for alive units
+            try:
+                board_units = engine.board.get_units()
+            except Exception:
+                board_units = []
+
+            for u in board_units:
+                try:
+                    self.unit_info[u.id] = {'symbol': u._get_unit_symbol(), 'team': getattr(u, 'team', None)}
+                except Exception:
+                    pass
+
+            # bucket units by team using persistent unit_info so dead units remain visible
+            units_by_team = {1: [], 2: []}
+            for uid, dmg in self.damage_done.items():
+                info = self.unit_info.get(uid)
+                if info is None:
+                    # no metadata; skip
+                    continue
+                team = info.get('team', 0)
+                units_by_team.setdefault(team, []).append((info, float(dmg)))
+
+            # render each team's chart in its own column
+            pad_left = 8
+            pad_top = 28
+            max_show = 8
+            region_h = chart_h - pad_top - 8
+
+            for idx, team in enumerate((1, 2)):
+                region_x = chart_x + idx * (each_w + spacing) + pad_left
+                region_w = each_w - pad_left - 6
+                # reserve space for the section title above bars
+                title_y = chart_y + pad_top
+                title_h = self.damage_font.get_height()
+                region_y = title_y + title_h + 6
+
+                # section title (team colored)
+                team_title = f"Team {team}"
+                title_col = self.team_colors.get(team, (200, 200, 200))
+                t_surf = self.damage_font.render(team_title, True, title_col)
+                self.screen.blit(t_surf, (region_x, title_y))
+
+                entries = units_by_team.get(team, [])
+                entries = sorted(entries, key=lambda x: x[1], reverse=True)[:max_show]
+
+                if not entries:
+                    no_surf = self.damage_font.render('No data', True, (160, 160, 160))
+                    self.screen.blit(no_surf, (region_x + 6, region_y + 6))
+                    continue
+
+                max_damage = max((d for _, d in entries), default=1.0) or 1.0
+                # fixed bar height for consistent chart appearance - slightly taller than damage font
+                font_h = self.damage_font.get_height()
+                bar_h_fixed = max(font_h + 4, int(self.cell_radius * 0.35), 12)
+                gap = 6
+                row_h = bar_h_fixed + gap
+                for i, (info, dmg) in enumerate(entries):
+                    y = region_y + i * row_h
+                    bx = region_x
+                    by = y + 2
+                    bw = region_w
+                    bh = bar_h_fixed
+                    pygame.draw.rect(self.screen, (30, 30, 30), (bx, by, bw, bh))
+                    fill_w = int(bw * (dmg / max_damage)) if max_damage > 0 else 0
+                    color = self.team_colors.get(info.get('team', None), (200, 200, 60))
+                    pygame.draw.rect(self.screen, color, (bx, by, fill_w, bh))
+                    label = f"{info.get('symbol', '?')} {int(dmg)}"
+                    lab_surf = self.damage_font.render(label, True, (255, 255, 255))
+                    self.screen.blit(lab_surf, (bx + 4, by - 1))
+
         remaining = []
         for item in self.floating_texts:
-            # item: [x0, y0, txt, start, duration, vx, vy]
-            x0, y0, txt, start, duration, vx, vy = item
+            # item: [x0, y0, txt, start, duration, vx, vy, color]
+            x0, y0, txt, start, duration, vx, vy, txt_color = item
             elapsed = now - start
             if elapsed <= duration:
                 # Parabolic motion: x = x0 + vx*t ; y = y0 + vy*t + 0.5*g*t^2
@@ -265,9 +514,9 @@ class PygameBoardVisualizer:
                 cur_x = x0 + vx * elapsed
                 cur_y = y0 + vy * elapsed + 0.5 * g * (elapsed ** 2)
                 alpha = max(0, min(255, int(255 * (1.0 - elapsed / duration))))
-                # Render text with white outline + orange fill at (cur_x, cur_y)
+                # Render text with white outline + fill at (cur_x, cur_y)
                 outline_color = (255, 255, 255)
-                fill_color = (255, 140, 0)
+                fill_color = txt_color
                 # thinner outline: fewer offset blits
                 outline_surf = self.damage_font.render(txt, True, outline_color).convert_alpha()
                 fill_surf = self.damage_font.render(txt, True, fill_color).convert_alpha()
@@ -280,12 +529,12 @@ class PygameBoardVisualizer:
                     self.screen.blit(outline_surf, orect)
                 frect = fill_surf.get_rect(center=(int(cur_x), int(cur_y)))
                 self.screen.blit(fill_surf, frect)
-                remaining.append([x0, y0, txt, start, duration, vx, vy])
+                remaining.append([x0, y0, txt, start, duration, vx, vy, txt_color])
         self.floating_texts = remaining
 
     def present(self):
         pygame.display.flip()
-        self.clock.tick(30)
+        self.clock.tick(self.render_fps)
 
     def close(self):
         pygame.quit()

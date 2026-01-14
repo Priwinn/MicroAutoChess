@@ -10,31 +10,31 @@ import pygame
 # Ensure project root is on path when running this file directly
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from src.core.visualizer import PygameBoardVisualizer
-from src.core.combat import CombatEngine
-from src.core.combat_test import setup_combat_scenario
+from visualizer import PygameBoardVisualizer
+from combat import CombatEngine
+from combat_test import setup_combat_scenario
 
 
 def main():
     board, team1_units, team2_units = setup_combat_scenario(debug=False)
+    render_fps = 60
+    dt = 1/render_fps
 
-    visual = PygameBoardVisualizer(board, cell_radius=40)
+    visual = PygameBoardVisualizer(board, render_fps=render_fps, cell_radius=40)
     engine = CombatEngine(board, combat_seed=42)
     engine.set_teams(team1_units, team2_units)
 
     running = True
     paused = False
-    fps = 20  # number of simulation frames (rounds) per second
+    engine_fps = 10  # number of simulation frames (rounds) per second
 
     # initial planning for frame 0
     all_units = [u for u in team1_units + team2_units if u.is_alive()]
     engine._plan_actions(all_units)
     sim_progress = 0.0
-
     try:
         while running:
             # control time using visual.clock
-            dt = visual.clock.tick(60) / 1000.0
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
@@ -53,7 +53,7 @@ def main():
                         sim_progress = 0.0
 
             if not paused:
-                sim_progress += dt * fps
+                sim_progress += dt * engine_fps
                 # advance as many whole simulation frames as needed
                 while sim_progress >= 1.0:
                     engine.frame_number += 1
@@ -73,7 +73,6 @@ def main():
             if not team1_alive or not team2_alive:
                 time.sleep(1.0)
                 running = False
-
     except KeyboardInterrupt:
         pass
     finally:

@@ -83,8 +83,8 @@ class CombatEngine:
         Set the teams for combat.
         Each team is a list of Unit objects.
         """
-        if not team1 or not team2:
-            raise ValueError("Both teams must have at least one unit.")
+        # if not team1 or not team2:
+        #     raise ValueError("Both teams must have at least one unit.")
         
         # Assign teams to units
         for unit in team1:

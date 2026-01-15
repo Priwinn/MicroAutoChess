@@ -64,9 +64,10 @@ class Unit:
     
     level: int = 1
     position: Optional[tuple] = None
-    current_health: float = 700
+    current_health: float = None
     current_mana: float = 0
     basic_attack_mana: float = 10
+    cost : int = 1
     
     spell_crit: bool = False  # Whether the unit's spell can crit
     basic_attack_overflow: float = 0.0  # Saves overflow initiative (unit gains initiative equal to basic attack each round). Basic attack takes 10 initiative.
@@ -92,8 +93,8 @@ class Unit:
             UnitType.WARRIOR: UnitStats(health=1200, attack=75, spell_power=1, defense=40, resistance=40, range=1),
             UnitType.ARCHER: UnitStats(health=700, attack=60, spell_power=1, defense=20, resistance=20, range=4, max_mana=75, spell=AttackSpeedBuffSpell(), attack_speed= 1.0),
             UnitType.MAGE: UnitStats(health=600, attack=40, spell_power=1, defense=20, resistance=20, range=4, max_mana=50),
-            UnitType.TANK: UnitStats(health=1500, attack=60, spell_power=1, defense=60, resistance=60, range=1, spell= SelfHealSpell(), attack_speed= 0.8),
-            UnitType.ASSASSIN: UnitStats(health=800, attack=50, spell_power=1, defense=30, resistance=30, range=1, max_mana=50, spell=AssassinBlinkSpell(), crit_rate=0.5, attack_speed= 1.2),
+            UnitType.TANK: UnitStats(health=1500, attack=50, spell_power=1, defense=60, resistance=60, range=1, spell= SelfHealSpell(), attack_speed= 0.8),
+            UnitType.ASSASSIN: UnitStats(health=800, attack=60, spell_power=1, defense=30, resistance=30, range=1, max_mana=50, spell=AssassinBlinkSpell(), crit_rate=0.5, attack_speed= 1.2),
             UnitType.SUPPORT: UnitStats(health=900, attack=25, spell_power=1, defense=20, resistance=20, range=4, max_mana=80),
         }
         return stat_templates.get(self.unit_type, UnitStats(health=100, attack=10, spell_power=1, defense=5, resistance=5, range=1))

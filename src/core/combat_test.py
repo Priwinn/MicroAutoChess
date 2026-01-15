@@ -81,7 +81,7 @@ def create_mock_units():
         team1_units.append(unit)
     
     #Define unit types for team 2
-    unit_types = [UnitType.WARRIOR, UnitType.ARCHER, UnitType.TANK, UnitType.ASSASSIN]
+    unit_types = []#[UnitType.WARRIOR, UnitType.ARCHER, UnitType.TANK, UnitType.ASSASSIN]
     # Create Team 2 Units (lowercase symbols)
     team2_units = []
     for unit_type in unit_types:
@@ -117,13 +117,12 @@ def setup_combat_scenario(debug: bool = False):
 
     
     # Position Team 2 units (bottom side)
-    board.place_unit(team2_units[0], (3, 4))  # Warrior front
-    board.place_unit(team2_units[2], (4, 4))  # Tank front
-    board.place_unit(team2_units[3], (5, 5))  # Assassin second line
-    board.place_unit(team2_units[1], (6, 7))  # Archer back
+    # board.place_unit(team2_units[0], (3, 4))  # Warrior front
+    # board.place_unit(team2_units[2], (4, 4))  # Tank front
+    # board.place_unit(team2_units[3], (5, 5))  # Assassin second line
+    # board.place_unit(team2_units[1], (6, 7))  # Archer back
     
     return board, team1_units, team2_units
-
 
 def run_combat_demonstration(debug: bool = False, combat_seed: int = 42):
     """Run the complete combat demonstration."""

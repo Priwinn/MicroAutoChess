@@ -10,8 +10,9 @@ if TYPE_CHECKING:
 class AbstractSpell:
     def __init__(self, name: str):
         self.name = name
-        self.spell_delay: int = 0 # Delay before the spell is executed, in frames
+        self.spell_delay: int = 2 # Delay before the spell is executed, in frames
         self.ranged: bool = False
+        self.spell_power: float = 1.0  # Multiplier for spell effects based on caster's stats
         self.target: Optional['Unit'] = None
         self.target_position: Optional[tuple] = None
         
@@ -26,6 +27,9 @@ class AbstractSpell:
 
     def __str__(self):
         return f"{self.name} Spell"
+
+    def description(self):
+        return "No description available."
 
 
 class FireballSpell(AbstractSpell):
@@ -63,6 +67,9 @@ class FireballSpell(AbstractSpell):
         else:
             print(f"Target {self.target.unit_type.value} is already defeated.")
 
+    def description(self):
+        return f"Deals {self.damage * self.spell_power} magical damage to a target and {self.damage/2 * self.spell_power} damage to adjacent allies."
+
 class SelfHealSpell(AbstractSpell):
     def __init__(self):
         super().__init__("Heal")
@@ -84,11 +91,14 @@ class SelfHealSpell(AbstractSpell):
         else:
             print(f"Target {self.target.unit_type.value} is already defeated.")
 
+    def description(self):
+        return f"Heals the caster for {self.heal_amount * self.spell_power} health."
+
 class AssassinBlinkSpell(AbstractSpell):
     """Teleport the assassin to the weakest enemy unit within 2 cells (note range is l2, hexes is l1). Increase range each cast."""
     def __init__(self):
         super().__init__("Assassin Blink")
-        self.spell_delay: int = 1
+        self.spell_delay: int = 3
         self.ranged = True
         self.range = 3  # Maximum distance to blink
         self.damage = 50  # Base damage
@@ -121,7 +131,7 @@ class AssassinBlinkSpell(AbstractSpell):
                 #Try within 2 range of weakest enemy
                 valid_positions = board.get_positions_in_l1_range(self.target.position, 2)
                 valid_positions = [pos for pos in valid_positions if (board.get_cell(pos).is_empty() and not board.get_cell(pos).is_planned())]
-                valid_positions.sort(key=lambda pos: board.l1_distance(source.position, pos))
+                valid_positions.sort(key=lambda pos: board.l1_distance(source.position, pos), reverse=True)
                 if valid_positions:
                     board.move_unit(source.position, valid_positions[0])
             # Deal damage to the weakest enemy
@@ -133,6 +143,9 @@ class AssassinBlinkSpell(AbstractSpell):
             
         # print(f"{source.unit_type.value} blinked to {weakest_enemy.unit_type.value}'s position at {weakest_enemy.position}.")
         self.range += 1  # Increase range for next blink
+    
+    def description(self):
+        return f"Blinks to the weakest enemy within {self.range} cells and deals {self.damage * self.spell_power} physical damage. Range increases by 1 each cast."
 
 
 class AttackSpeedBuffSpell(AbstractSpell):
@@ -141,6 +154,7 @@ class AttackSpeedBuffSpell(AbstractSpell):
         self.spell_delay: int = 1
         self.ranged = False
         self.buff_amount = 0.2  # 20% attack speed increase
+        self.spell_power = 1.0  # This can be modified by the caster's stats
 
     def prepare(self, source, board):
         self.target = source
@@ -153,3 +167,6 @@ class AttackSpeedBuffSpell(AbstractSpell):
             # print(f"{source.unit_type.value} casted {self.name} on {target.unit_type.value}, increasing attack speed from {original_attack_speed} to {target.base_stats.attack_speed}.")
         else:
             print(f"Target {self.target.unit_type.value} is already defeated.")
+
+    def description(self):
+        return f"Increases the caster's attack speed by {self.buff_amount * 100}%. Stacks with multiple casts."

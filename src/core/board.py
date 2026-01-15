@@ -97,6 +97,17 @@ class Board:
         x, y = position
         return 0 <= x < self.width and 0 <= y < self.height
     
+    def is_valid_initial_position(self, position: Tuple[int, int], team: int) -> bool:
+        """Check if position is valid for initial unit placement based on team."""
+        x, y = position
+        if not self.is_valid_position(position):
+            return False
+        if team == 1:
+            return y < self.height // 2  # Team 1 on top half
+        elif team == 2:
+            return y >= self.height // 2  # Team 2 on bottom half
+        return False
+
     def place_unit(self, unit: Unit, position: Tuple[int, int]) -> bool:
         """Place unit at position."""
         if not self.is_valid_position(position):
@@ -184,6 +195,26 @@ class Board:
                 if self.is_valid_position(new_pos):
                     positions_in_range.append(new_pos)
         return positions_in_range
+
+    def get_initial_positions(self, team: int) -> List[Tuple[int, int]]:
+        """Return a list of board positions considered valid initial placement for a team.
+
+        By convention: split the board horizontally. Team 1 uses the upper half (smaller y),
+        Team 2 uses the lower half (larger y).
+        """
+        mid = self.height // 2
+        positions = []
+        if team == 1:
+            for x in range(self.width):
+                for y in range(0, mid):
+                    if self.is_valid_position((x, y)):
+                        positions.append((x, y))
+        else:
+            for x in range(self.width):
+                for y in range(mid, self.height):
+                    if self.is_valid_position((x, y)):
+                        positions.append((x, y))
+        return positions
     
 
     def find_path(self, start: Tuple[int, int], target: Tuple[int, int]) -> List[Tuple[int, int]]:

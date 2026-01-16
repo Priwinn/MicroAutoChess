@@ -42,7 +42,27 @@ class PygameBoardVisualizer:
     def __init__(self, board, render_fps: int = 60, cell_radius: int = 28, margin: int = 16):
         pygame.font.init()
         self.board = board
-        self.cell_radius = cell_radius
+        # Desired fullscreen/window resolution
+        desired_w, desired_h = (1920, 1080)
+
+        # Start with requested cell radius, compute estimated original sizes
+        orig_cell = cell_radius
+        est_right = max(320, int(orig_cell * 6))
+        est_bottom = max(60, int(orig_cell * 1.0))
+        est_w = int(orig_cell * math.sqrt(3) * (self.board.width + 0.5)) + margin * 2 + est_right
+        est_h = int(orig_cell * 1.5 * (self.board.height + 1)) + margin * 2 + est_bottom
+
+        # Compute scale factor to fit the board into the desired window
+        try:
+            scale = min(float(desired_w) / max(1, est_w), float(desired_h) / max(1, est_h))
+        except Exception:
+            scale = 1.0
+
+        # Limit scaling for sanity
+        scale = max(0.5, min(scale, 4.0))
+
+        # Apply scale to cell radius and use that for layout
+        self.cell_radius = max(10, int(orig_cell * scale))
         self.margin = margin
         self.bg_color = (30, 30, 30)
         self.grid_color = (80, 80, 80)
@@ -50,19 +70,24 @@ class PygameBoardVisualizer:
         self.font = pygame.font.SysFont('Arial', max(12, int(cell_radius * 0.6)))
         self.render_fps = render_fps
         # Smaller font for hover tooltips
-        self.tooltip_font = pygame.font.SysFont('Arial', max(9, int(cell_radius * 0.45)))
+        # Fonts scaled relative to computed cell radius
+        self.tooltip_font = pygame.font.SysFont('Arial', max(9, int(self.cell_radius * 0.45)))
         self.tooltip_max_width = max(220, int(self.cell_radius * 5))
 
-        # Estimate window size
-        # reserve extra space to the right for charts / debug panels
-        self.right_panel_width = max(320, int(self.cell_radius * 6))
-        # reserve extra space at bottom for UI (spawn buttons / shop)
+        # Reserve extra space to the right for charts / debug panels and bottom for UI
+        # Increase default right panel to provide a larger damage meter area
+        self.right_panel_width = max(480, int(self.cell_radius * 8))
         self.bottom_panel_height = max(60, int(self.cell_radius * 1.0))
-        w = int(cell_radius * math.sqrt(3) * (self.board.width + 0.5)) + margin * 2 + self.right_panel_width
-        h = int(cell_radius * 1.5 * (self.board.height + 1)) + margin * 2 + self.bottom_panel_height
-        self.window_size = (w, h)
+
+        # Force window size to desired resolution
+        self.window_size = (desired_w, desired_h)
         # Add extra left offset so the grid doesn't sit flush to the window edge
-        self.left_offset = int(self.window_size[0] * 0.06)
+        # Shift board slightly to the right for better centering
+        base_offset = int(self.window_size[0] * 0.06)
+        extra_shift = int(self.window_size[0] * 0.04)  # additional right shift
+        self.left_offset = base_offset + extra_shift
+        # Optional override for spawn button start x (align spawn buttons to shop)
+        self.spawn_start_x: int | None = None
 
         pygame.init()
         self.screen = pygame.display.set_mode(self.window_size)
@@ -80,7 +105,9 @@ class PygameBoardVisualizer:
         # damage done per unit id
         self.damage_done = defaultdict(float)
         # smaller font for damage numbers
-        self.damage_font = pygame.font.SysFont('Arial', max(10, int(cell_radius * 0.5)))
+        self.damage_font = pygame.font.SysFont('Arial', max(14, int(self.cell_radius * 0.6)))
+        # larger font for chart titles
+        self.title_font = pygame.font.SysFont('Arial', max(18, int(self.cell_radius * 0.9)))
         # store lightweight unit info (symbol, team) so dead units can still be shown in charts
         self.unit_info = {}
 
@@ -479,10 +506,10 @@ class PygameBoardVisualizer:
 
         # Draw two damage charts (one per team) side-by-side to the right of the board
         if engine is not None and self.damage_done:
-            # per-chart width and spacing
-            each_w = max(140, int(self.window_size[0] * 0.12))
-            spacing = 10
-            total_w = each_w * 2 + spacing
+            # Use the reserved right panel width for charts so the damage meter is larger
+            spacing = 12
+            total_w = int(self.right_panel_width)
+            each_w = max(180, int((total_w - spacing) / 2))
             chart_x = self.window_size[0] - total_w - self.margin
             chart_y = self.margin
             chart_h = self.window_size[1] - 2 * self.margin
@@ -490,7 +517,7 @@ class PygameBoardVisualizer:
             # background panel covering both charts
             pygame.draw.rect(self.screen, (40, 40, 40), (chart_x, chart_y, total_w, chart_h))
             # main title above the charts
-            title_surf = self.font.render('Damage Meter', True, (230, 230, 230))
+            title_surf = self.title_font.render('Damage Meter', True, (230, 230, 230))
             self.screen.blit(title_surf, (chart_x + 8, chart_y + 6))
 
             # gather units from board and update unit_info for alive units
@@ -517,7 +544,7 @@ class PygameBoardVisualizer:
 
             # render each team's chart in its own column
             pad_left = 8
-            pad_top = 28
+            pad_top = self.title_font.get_height()
             max_show = 8
             region_h = chart_h - pad_top - 8
 
@@ -820,7 +847,11 @@ class PygameBoardVisualizer:
         base_rect = self.get_pause_button_rect()
         spacing = 8
         total_w = total * btn_w + (total - 1) * spacing
-        start_x = max(self.margin, base_rect.x - total_w - 16)
+        # Allow overriding the spawn row start x (useful to align with shop/board)
+        if getattr(self, 'spawn_start_x', None) is not None:
+            start_x = int(self.spawn_start_x)
+        else:
+            start_x = max(self.margin, base_rect.x - total_w - 16)
         bx = start_x + index * (btn_w + spacing)
         by = base_rect.y
         return pygame.Rect(int(bx), int(by), int(btn_w), int(btn_h))

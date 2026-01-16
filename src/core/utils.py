@@ -56,3 +56,19 @@ def get_units_from_config(config: Dict[str, Any]) -> List[Unit]:
         except Exception as e:
             raise RuntimeError(f"Failed to create unit {unit.unit_type.value} for position {position}: {e}")
     return units
+
+def place_units_from_config(board: Board, config: Dict[str, Any], team: int = 1) -> List[Unit]:
+    """Place units on the board based on a configuration dict.
+    Returns the list of placed units.
+    """
+    unit_dict = config['units']
+    placed_units = []
+    for position, unit_type in unit_dict.items():
+        if board.is_empty(position):
+            try:
+                unit = Unit(unit_type=unit_type, rarity=UnitRarity.COMMON, team=team, level=1)
+                board.place_unit(unit, position)
+                placed_units.append(unit)
+            except Exception as e:
+                raise RuntimeError(f"Failed to place unit {unit.unit_type.value} at {position}: {e}")
+    return placed_units

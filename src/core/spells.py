@@ -39,6 +39,7 @@ class FireballSpell(AbstractSpell):
         self.damage = 100
         self.range = 5
         self.spell_delay: int = 2  # Delay before the spell is executed, in frames
+        
 
     def prepare(self, source, board):
         self.target = source.current_target
@@ -101,7 +102,7 @@ class AssassinBlinkSpell(AbstractSpell):
         self.spell_delay: int = 3
         self.ranged = True
         self.range = 3  # Maximum distance to blink
-        self.damage = 50  # Base damage
+        self.damage = 100  # Base damage
 
     def prepare(self, source, board):
         # Find the weakest enemy unit within range
@@ -153,7 +154,7 @@ class AttackSpeedBuffSpell(AbstractSpell):
         super().__init__("Attack Speed Buff")
         self.spell_delay: int = 1
         self.ranged = False
-        self.buff_amount = 0.2  # 20% attack speed increase
+        self.buff_amount = 0.25  # 20% attack speed increase
         self.spell_power = 1.0  # This can be modified by the caster's stats
 
     def prepare(self, source, board):

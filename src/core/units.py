@@ -64,6 +64,7 @@ class Unit:
     
     level: int = 1
     position: Optional[tuple] = None
+    planned_position: Optional[tuple] = None  # Position planned for next move
     current_health: float = None
     current_mana: float = 0
     basic_attack_mana: float = 10
@@ -85,16 +86,18 @@ class Unit:
         
         if self.current_health is None:
             self.current_health = self.get_max_health()
+        # TODO UPDATE SPELL STATS LIVE INSTEAD
+        self.base_stats.spell.spell_power = self.base_stats.spell_power
         self.id = next(self._ids)
     
     def _get_default_stats(self) -> UnitStats:
         """Get default stats based on unit type."""
         stat_templates = {
-            UnitType.WARRIOR: UnitStats(health=1200, attack=75, spell_power=1, defense=40, resistance=40, range=1),
-            UnitType.ARCHER: UnitStats(health=700, attack=60, spell_power=1, defense=20, resistance=20, range=4, max_mana=75, spell=AttackSpeedBuffSpell(), attack_speed= 1.0),
-            UnitType.MAGE: UnitStats(health=600, attack=40, spell_power=1, defense=20, resistance=20, range=4, max_mana=50),
+            UnitType.WARRIOR: UnitStats(health=1200, attack=65, spell_power=1, defense=40, resistance=40, range=1),
+            UnitType.ARCHER: UnitStats(health=700, attack=60, spell_power=1, defense=20, resistance=20, range=4, max_mana=70, spell=AttackSpeedBuffSpell(), attack_speed= 1.0),
+            UnitType.MAGE: UnitStats(health=600, attack=40, spell_power=2.5, defense=20, resistance=20, range=4, max_mana=50),
             UnitType.TANK: UnitStats(health=1500, attack=50, spell_power=1, defense=60, resistance=60, range=1, spell= SelfHealSpell(), attack_speed= 0.8),
-            UnitType.ASSASSIN: UnitStats(health=800, attack=60, spell_power=1, defense=30, resistance=30, range=1, max_mana=50, spell=AssassinBlinkSpell(), crit_rate=0.5, attack_speed= 1.2),
+            UnitType.ASSASSIN: UnitStats(health=800, attack=60, spell_power=1, defense=25, resistance=30, range=1, max_mana=50, spell=AssassinBlinkSpell(), crit_rate=0.5, attack_speed= 1.2),
             UnitType.SUPPORT: UnitStats(health=900, attack=25, spell_power=1, defense=20, resistance=20, range=4, max_mana=80),
         }
         return stat_templates.get(self.unit_type, UnitStats(health=100, attack=10, spell_power=1, defense=5, resistance=5, range=1))

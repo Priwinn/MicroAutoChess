@@ -1,6 +1,7 @@
 from typing import *
 from board import Board
-from utils import get_units_from_config, setup_board_from_config
+from constant_types import UnitType
+from utils import get_units_from_config, place_units_from_config, setup_board_from_config
 from units import Unit
 
 
@@ -12,7 +13,7 @@ class PvERoundManager:
     the manager will also accept the legacy tuple form `(board_size, units)`.
     """
 
-    def __init__(self, configs: List[Dict[str, Any]], initial_budget: int = 4):
+    def __init__(self, configs: List[Dict[str, Any]], initial_budget: int = 0):
         # store provided configs (dicts). Legacy tuple formats are accepted too.
         self.configs: List[Any] = configs
 
@@ -23,7 +24,7 @@ class PvERoundManager:
         self.enemy_positions: Optional[List[Tuple[int, int]]] = None
 
         # Budget handling: initial and current player budget
-        self.initial_budget = int(initial_budget)
+        self.initial_budget = int(initial_budget) + self.configs[0]['budget_inc']
         # Allow first config to set a start budget via 'start_budget'
         first_cfg = configs[0] if configs else None
         try:
@@ -125,35 +126,19 @@ class PvERoundManager:
         Returns (enemy_units_list, player_units_list) that were placed on board.
         """
         # clear all units from board
-        try:
-            for u in list(board.get_units()):
-                if u and u.position is not None:
-                    try:
-                        board.remove_unit(u.position)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        # try:
+        #     for u in list(board.get_units()):
+        #         if u and u.position is not None:
+        #             try:
+        #                 board.remove_unit(u.position)
+        #             except Exception:
+        #                 pass
+        # except Exception:
+        #     pass
+        board.reset_board()
 
         # prepare enemy units (fresh clones)
-        enemy_units = get_units_from_config(self.configs[self.round_index])
-        # prefer stored enemy positions if available
-        enemy_positions = self.enemy_positions or board.get_initial_positions(1)
-        # place enemies into first available enemy positions
-        ei = 0
-        for u in enemy_units:
-            while ei < len(enemy_positions):
-                pos = enemy_positions[ei]
-                ei += 1
-                if board.is_empty(pos):
-                    try:
-                        u.team = 1
-                        u.current_health = u.get_max_health()
-                        u.current_mana = 0
-                        board.place_unit(u, pos)
-                    except Exception:
-                        continue
-                    break
+        enemy_units = place_units_from_config(board, self.configs[self.round_index], team=1)
 
         # prepare player units
         if reset_player or not player_units:
@@ -175,6 +160,9 @@ class PvERoundManager:
         pi = 0
         # If there are more units than positions, remaining units will be placed in first available spots.
         for u in player_units_to_place:
+            # TODO RESET SPELL PROPERLY FOR EVERY UNIT TYPE
+            if (u.unit_type is UnitType.ASSASSIN):#
+                u.base_stats.spell.range = 3
             placed = False
             # try to place in the stored positions list first
             while pi < len(player_positions):

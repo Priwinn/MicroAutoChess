@@ -245,6 +245,7 @@ class CombatEngine:
                 chosen_action = self.rng.choice(actions)
                 self.action_queue.append(chosen_action)
                 self.board.set_planned(chosen_action.target_position, chosen_action.unit)
+                chosen_action.unit.planned_position = chosen_action.target_position
                 # Set other actions to WAIT
                 for action in actions:
                     if action != chosen_action:
@@ -275,6 +276,7 @@ class CombatEngine:
                 # No conflict, just add the single action
                 self.action_queue.append(actions[0])
                 self.board.set_planned(actions[0].target_position, actions[0].unit)
+                actions[0].unit.planned_position = actions[0].target_position
             
 
 
@@ -428,6 +430,7 @@ class CombatEngine:
             new_position = action.target_position
             
             if old_position and new_position:
+                
                 moved = self.board.move_unit(old_position, new_position)
                 if moved:
                     event = CombatEvent(
@@ -474,6 +477,8 @@ class CombatEngine:
                 
                 # Remove from board
                 self.board.remove_unit(unit.position)
+                if unit.planned_position:
+                    self.board.remove_unit(unit.planned_position)  # Also remove any planned position
                 
                 # Cancel any pending actions from this dead unit
                 self.action_queue = [action for action in self.action_queue if action.unit != unit]

@@ -131,7 +131,11 @@ class Board:
         if not from_cell or not to_cell:
             return False
         
-        if from_cell.unit is None or (to_cell.is_planned() and to_cell.unit != from_cell.unit) or to_cell.is_occupied():
+        if from_cell.unit is None:
+            return False
+        
+        from_cell.unit.planned_position = None
+        if (to_cell.is_planned() and to_cell.unit != from_cell.unit) or to_cell.is_occupied():
             return False
         
         unit = from_cell.remove_unit()
@@ -297,6 +301,12 @@ class Board:
             cell.unit = unit
         else:
             raise ValueError(f"Cell {position} is not empty or already planned")
+
+    def reset_board(self):
+        """Reset the board to empty state."""
+        for cell in self.cells.values():
+            cell.unit = None
+            cell.cell_type = CellType.EMPTY
 
     def clone(self) -> 'Board':
         """Create a deep copy of the board."""

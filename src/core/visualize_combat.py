@@ -2,14 +2,17 @@
 
 Usage: `python src/core/visualize_combat.py`
 """
+import math
 import sys
 import os
 import time
+import random
 import pygame
 
 # Ensure project root is on path when running this file directly
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
+import global_log
 from visualizer import PygameBoardVisualizer
 from combat import CombatEngine
 from combat_test import setup_combat_scenario
@@ -17,6 +20,7 @@ from units import Unit
 from constant_types import UnitType, UnitRarity
 from pve_round_manager import PvERoundManager
 from utils import TEAM1_POSITION_MAP1, TEAM1_POSITION_MAP2, setup_board_from_dict, setup_board_from_config
+from levels import LEVELS
 
 
 def main():
@@ -24,10 +28,7 @@ def main():
     # board, team1_units, team2_units = setup_board_from_dict((7, 8), TEAM1_POSITION_MAP)
     # snapshot player's starting units for resets
     # create PvE manager with initial enemy configuration; more configs can be added
-    round_configs = [
-        {"board_size": (7, 8), "units": TEAM1_POSITION_MAP1, "budget_inc": 4},
-        {"board_size": (7, 8), "units": TEAM1_POSITION_MAP2, "budget_inc": 2},
-    ]
+    round_configs = LEVELS
     pve_manager = PvERoundManager(configs=round_configs)
     board, team1_units, team2_units = pve_manager.setup_round()
 
@@ -59,6 +60,11 @@ def main():
         player_budget = 4
     try:
         while running:
+            # ensure spawn button positions used for input match drawing
+            try:
+                visual.spawn_start_x = visual.left_offset + visual.margin
+            except Exception:
+                visual.spawn_start_x = None
             # control time using visual.clock
 
             for event in pygame.event.get():
@@ -81,7 +87,7 @@ def main():
                     try:
                         if speed_up_rect is not None and speed_up_rect.collidepoint(event.pos):
                             try:
-                                engine_fps = min(59, int(engine_fps * 2))
+                                engine_fps = min(40, int(engine_fps * 2))
                             except Exception:
                                 engine_fps = 60
                             continue
@@ -188,8 +194,9 @@ def main():
                             try:
                                 spawn0 = visual.get_spawn_button_rect(0, total=5)
                                 pause_r = visual.get_pause_button_rect()
-                                shop_x = spawn0.x
-                                shop_w = pause_r.right - spawn0.x
+                                # align shop left with board left offset so it sits directly below the board
+                                shop_x = visual.left_offset + visual.margin
+                                shop_w = pause_r.right - shop_x
                                 # use a slightly taller shop rectangle to make selling easier
                                 shop_h = max(spawn0.h, pause_r.h, int(spawn0.h * 1.2))
                                 # anchor shop at bottom of window so it doesn't overlap the board
@@ -255,10 +262,10 @@ def main():
                     if event.key == pygame.K_n:
                         # advance one simulation frame
                         engine.frame_number += 1
-                        all_units = [u for u in team1_units + team2_units if u.is_alive()]
                         engine._execute_queued_actions()
                         engine._plan_actions(all_units)
                         engine._cleanup_dead_units(all_units)
+                        all_units = [u for u in team1_units + team2_units if u.is_alive()]
                         sim_progress = 0.0
 
             if not paused:
@@ -266,10 +273,10 @@ def main():
                 # advance as many whole simulation frames as needed
                 while sim_progress >= 1.0:
                     engine.frame_number += 1
-                    all_units = [u for u in team1_units + team2_units if u.is_alive()]
                     engine._execute_queued_actions()
                     engine._plan_actions(all_units)
                     engine._cleanup_dead_units(all_units)
+                    all_units = [u for u in team1_units + team2_units if u.is_alive()]
                     sim_progress -= 1.0
 
             # when the match actually starts (unpaused at frame 0), capture player starting positions
@@ -280,17 +287,17 @@ def main():
                     except Exception:
                         pass
                     player_positions = [u.position for u in team2_units if getattr(u, 'position', None) is not None]
-                    enemy_positions = [u.position for u in team1_units if getattr(u, 'position', None) is not None]
+                    # enemy_positions = [u.position for u in team1_units if getattr(u, 'position', None) is not None]
                     if player_positions:
                         try:
                             pve_manager.save_player_positions(player_positions)
                         except Exception:
                             pass
-                    if enemy_positions:
-                        try:
-                            pve_manager.save_enemy_positions(enemy_positions)
-                        except Exception:
-                            pass
+                    # if enemy_positions:
+                    #     try:
+                    #         pve_manager.save_enemy_positions(enemy_positions)
+                    #     except Exception:
+                    #         pass
 
 
             # draw with current in-frame progress
@@ -306,12 +313,22 @@ def main():
                 except Exception:
                     cost = 1
                 spawn_specs.append((ut, cost))
+            # align spawn buttons to the left of the shop (directly under the board)
+            try:
+                visual.spawn_start_x = visual.left_offset + visual.margin
+            except Exception:
+                visual.spawn_start_x = None
             # query budget from PvE manager for display
             try:
                 current_budget = int(pve_manager.player_budget)
             except Exception:
                 current_budget = player_budget
             visual.draw_spawn_buttons(spawn_specs, budget=current_budget)
+            # clear override so other code paths aren't affected
+            try:
+                visual.spawn_start_x = None
+            except Exception:
+                pass
             # draw budget text near spawn buttons
             try:
                 if spawn_specs:
@@ -340,8 +357,9 @@ def main():
                     try:
                         spawn0 = visual.get_spawn_button_rect(0, total=5)
                         pause_r = visual.get_pause_button_rect()
-                        shop_x = spawn0.x
-                        shop_w = pause_r.right - spawn0.x
+                        # align shop left with board left offset so it sits directly below the board
+                        shop_x = visual.left_offset + visual.margin
+                        shop_w = pause_r.right - shop_x
                         shop_h = max(spawn0.h, pause_r.h, int(spawn0.h * 1.2))
                         # anchor shop at bottom of window so it doesn't overlap the board
                         shop_y = visual.window_size[1] - shop_h - visual.margin
@@ -428,9 +446,17 @@ def main():
                         sim_progress = 0.0
                         continue
                     else:
-                        # no more rounds -> exit
-                        time.sleep(1.0)
-                        running = False
+                        # no more rounds -> show magnificent win screen then exit
+                        display_win_screen(visual)
+                        pve_manager = PvERoundManager(configs=round_configs)
+                        board, team1_units, team2_units = pve_manager.setup_round()
+                        player_budget = pve_manager.player_budget
+                        visual = PygameBoardVisualizer(board, render_fps=render_fps, cell_radius=40)
+                        engine = CombatEngine(board, combat_seed=42)
+                        engine.set_teams(team1_units, team2_units)
+                        global_log.combat_log.clear()
+                        # running = False
+
                 else:
                     # player lost -> reset to round initial configuration and restore player's units
                     team1_units, team2_units = pve_manager.apply_round_to_board(board, player_units=None, reset_player=True)
@@ -443,6 +469,151 @@ def main():
         pass
     finally:
         visual.close()
+
+
+def display_win_screen(visual: 'PygameBoardVisualizer', duration: float = 600.0):
+    """Show a large celebratory win screen with confetti and fireworks.
+
+    Blocks for `duration` seconds or until the user presses a key/mouse.
+    """
+    screen = visual.screen
+    clock = visual.clock
+    start = pygame.time.get_ticks() / 1000.0
+    now = start
+
+    # confetti: list of [x, y, vx, vy, w, h, color, rot]
+    confetti = []
+    # fireworks: list of [x,y,phase,start,colors,particles]
+    fireworks = []
+
+    def spawn_confetti(n=80):
+        for i in range(n):
+            x = random.uniform(0, visual.window_size[0])
+            y = random.uniform(-visual.window_size[1]*0.5, 0)
+            vx = random.uniform(-80, 80)
+            vy = random.uniform(40, 220)
+            w = random.randint(6, 14)
+            h = random.randint(6, 14)
+            color = (random.randint(100, 255), random.randint(80, 255), random.randint(80, 255))
+            confetti.append([x, y, vx, vy, w, h, color, random.uniform(0, 360)])
+
+    def spawn_firework():
+        x = random.uniform(visual.window_size[0]*0.15, visual.window_size[0]*0.85)
+        y = random.uniform(visual.window_size[1]*0.15, visual.window_size[1]*0.45)
+        colors = [(random.randint(128, 255), random.randint(128, 255), random.randint(128, 255)) for _ in range(6)]
+        particles = []
+        for i in range(40):
+            ang = random.uniform(0, 2*math.pi)
+            speed = random.uniform(60, 320)
+            particles.append([math.cos(ang)*speed, math.sin(ang)*speed, random.choice(colors)])
+        fireworks.append([x, y, 0.0, pygame.time.get_ticks()/1000.0, colors, particles])
+
+    # big title font
+    try:
+        big_font = pygame.font.SysFont('Arial', 72)
+    except Exception:
+        big_font = visual.font
+
+    spawn_confetti(140)
+    next_fire = now + 0.3
+
+    running_win = True
+    while running_win:
+        for ev in pygame.event.get():
+            if ev.type == pygame.QUIT:
+                running_win = False
+                break
+            if ev.type in (pygame.KEYDOWN, pygame.MOUSEBUTTONDOWN):
+                running_win = False
+                break
+
+        now = pygame.time.get_ticks() / 1000.0
+        t = now - start
+        # update confetti
+        new_conf = []
+        for c in confetti:
+            c[0] += c[2] * (1/visual.render_fps)
+            c[1] += c[3] * (1/visual.render_fps)
+            c[3] += 30 * (1/visual.render_fps)  # gravity
+            c[7] += 180 * (1/visual.render_fps)
+            if c[1] < visual.window_size[1] + 50:
+                new_conf.append(c)
+        confetti[:] = new_conf
+
+        # occasional spawn
+        if random.random() < 0.08:
+            spawn_confetti(8)
+
+        # fireworks spawn
+        if now >= next_fire:
+            spawn_firework()
+            next_fire = now + random.uniform(0.6, 1.4)
+
+        # draw overlay
+        screen.fill((8, 8, 24))
+
+        # draw large title with glow and pulse
+        pulse = 1.0 + 0.08 * math.sin(t * 6.0)
+        title = "VICTORY!"
+        title_surf = big_font.render(title, True, (255, 240, 120))
+        tw, th = title_surf.get_size()
+        sx = visual.window_size[0] // 2
+        sy = int(visual.window_size[1] * 0.32)
+        # glow layers
+        for i, a in enumerate((220, 140, 80)):
+            glow_s = pygame.Surface((int(tw * (1.0 + i*0.18)), int(th * (1.0 + i*0.18))), pygame.SRCALPHA)
+            alpha = max(40, int(180 / (i+1)))
+            pygame.draw.rect(glow_s, (255, 200, 80, alpha), glow_s.get_rect(), border_radius=16)
+            rect = glow_s.get_rect(center=(sx, sy))
+            screen.blit(glow_s, rect)
+
+        ts = pygame.transform.rotozoom(title_surf, 0, pulse)
+        rect = ts.get_rect(center=(sx, sy))
+        screen.blit(ts, rect)
+
+        # subtitle
+        try:
+            small = pygame.font.SysFont('Arial', 28)
+        except Exception:
+            small = visual.tooltip_font
+        subtitle = "All rounds cleared — You are the most magnificent!"
+        sub_s = small.render(subtitle, True, (220, 220, 255))
+        screen.blit(sub_s, (visual.window_size[0]//2 - sub_s.get_width()//2, sy + int(th*0.7)))
+
+        # draw confetti
+        for c in confetti:
+            x, y, vx, vy, w, h, color, rot = c
+            r = pygame.Surface((int(w), int(h)), pygame.SRCALPHA)
+            pygame.draw.rect(r, color, (0, 0, int(w), int(h)), border_radius=2)
+            rr = pygame.transform.rotate(r, rot)
+            screen.blit(rr, (int(x - rr.get_width()/2), int(y - rr.get_height()/2)))
+
+        # draw fireworks
+        alive_fw = []
+        for fw in fireworks:
+            x, y, phase, start_t, colors, parts = fw
+            age = now - start_t
+            # particles outward
+            for p in parts:
+                vx, vy, col = p
+                px = x + vx * age * 0.004
+                py = y + vy * age * 0.004 + 0.5 * 60 * (age**2)
+                rad = max(1, int(3 + 2 * (1.0 - max(0.0, age/1.4))))
+                if 0 <= px < visual.window_size[0] and 0 <= py < visual.window_size[1]:
+                    pygame.draw.circle(screen, col, (int(px), int(py)), rad)
+            if age < 1.6:
+                alive_fw.append(fw)
+        fireworks[:] = alive_fw
+
+        # small instruction
+        inst = visual.tooltip_font.render('Press any key or click to continue', True, (200, 200, 200))
+        screen.blit(inst, (visual.window_size[0]//2 - inst.get_width()//2, int(visual.window_size[1]*0.88)))
+
+        pygame.display.flip()
+        clock.tick(visual.render_fps)
+
+        if now - start >= duration:
+            break
 
 
 if __name__ == '__main__':

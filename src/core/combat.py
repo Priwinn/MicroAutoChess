@@ -306,7 +306,7 @@ class CombatEngine:
 
         
         # Find target (closest enemy). 
-        # TODO: Need to store the target to avoid re-targeting unless necessary.
+        # TODO: Need to use path distance instead of l2 distance for better targeting (for melee units especially)
         target = self._find_target(unit, enemies)
         
         if not target or not target.position:

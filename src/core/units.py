@@ -49,7 +49,7 @@ class UnitStats:
     max_mana: float = 100
     move_speed: float = 1.0 
     attack_speed: float = 1.0
-    spell: AbstractSpell = FireballSpell()
+    spell: AbstractSpell = None
 
 
 @dataclass

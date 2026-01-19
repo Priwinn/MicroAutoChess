@@ -102,22 +102,6 @@ LEVEL7 = {
 LEVEL8 = {
     'board_size': (7, 8),
     'units': {
-        (0, 0): UnitType.MAGE,
-        (1, 0): UnitType.MAGE,
-        (2, 0): UnitType.MAGE,
-        (3, 0): UnitType.MAGE,
-        (4, 0): UnitType.MAGE,
-        (5, 0): UnitType.MAGE,
-        (6, 0): UnitType.MAGE,
-        (3, 3): UnitType.TANK,
-
-    },
-    'budget_inc': 0
-}
-
-LEVEL9 = {
-    'board_size': (7, 8),
-    'units': {
         (0, 3): UnitType.WARRIOR,
         (1, 3): UnitType.WARRIOR,
         (2, 3): UnitType.WARRIOR,
@@ -131,8 +115,24 @@ LEVEL9 = {
     'budget_inc': 1
 }
 
+LEVEL9 = {
+    'board_size': (7, 8),
+    'units': {
+        (0, 0): UnitType.MAGE,
+        (1, 0): UnitType.MAGE,
+        (2, 0): UnitType.MAGE,
+        (3, 0): UnitType.MAGE,
+        (4, 0): UnitType.MAGE,
+        (5, 0): UnitType.MAGE,
+        (6, 0): UnitType.MAGE,
+        (3, 3): UnitType.TANK,
+
+    },
+    'budget_inc': 1
+}
+
 LEVELS = [
-        LEVEL1, 
+          LEVEL1, 
           LEVEL2, 
           LEVEL3, 
           LEVEL4, 

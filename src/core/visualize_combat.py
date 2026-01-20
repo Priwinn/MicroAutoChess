@@ -133,6 +133,9 @@ def main():
                                 # check budget (managed by pve_manager)
                                 if cost > getattr(pve_manager, 'player_budget', player_budget):
                                     break
+                                #Only allow spawning if combat hasn't started yet
+                                if not paused or engine.frame_number > 0:
+                                    break
                                 # find first empty initial cell for team 2
                                 valid = board.get_initial_positions(2)
                                 target = None
@@ -148,6 +151,9 @@ def main():
                                     new_u.current_mana = 0
                                     board.place_unit(new_u, target)
                                     team2_units.append(new_u)
+                                    all_units.append(new_u)
+                                    all_units.sort(key=lambda u: (u.position[0]*board.size[1] + u.position[1]))
+
                                     # deduct budget from PvE manager
                                     try:
                                         pve_manager.player_budget = int(pve_manager.player_budget) - int(cost)
@@ -261,22 +267,14 @@ def main():
                     # single-step forward when paused
                     if event.key == pygame.K_n:
                         # advance one simulation frame
-                        engine.frame_number += 1
-                        engine._execute_queued_actions()
-                        engine._plan_actions(all_units)
-                        engine._cleanup_dead_units(all_units)
-                        all_units = [u for u in team1_units + team2_units if u.is_alive()]
+                        engine._execute_delayed_frame(all_units=all_units)
                         sim_progress = 0.0
 
             if not paused:
                 sim_progress += dt * engine_fps
                 # advance as many whole simulation frames as needed
                 while sim_progress >= 1.0:
-                    engine.frame_number += 1
-                    engine._execute_queued_actions()
-                    engine._plan_actions(all_units)
-                    engine._cleanup_dead_units(all_units)
-                    all_units = [u for u in team1_units + team2_units if u.is_alive()]
+                    engine._execute_delayed_frame(all_units=all_units)
                     sim_progress -= 1.0
 
             # when the match actually starts (unpaused at frame 0), capture player starting positions
@@ -441,6 +439,8 @@ def main():
                         team1_units, team2_units = pve_manager.apply_round_to_board(board, player_units=team2_units, reset_player=True)
                         engine = CombatEngine(board, combat_seed=42)
                         engine.set_teams(team1_units, team2_units)
+                        all_units = [u for u in team1_units + team2_units if u.is_alive()]
+                        all_units.sort(key=lambda u: (u.position[0]*board.size[1] + u.position[1]))
                         # restart paused at beginning of next round
                         paused = True
                         sim_progress = 0.0
@@ -462,6 +462,8 @@ def main():
                     team1_units, team2_units = pve_manager.apply_round_to_board(board, player_units=None, reset_player=True)
                     engine = CombatEngine(board, combat_seed=42)
                     engine.set_teams(team1_units, team2_units)
+                    all_units = [u for u in team1_units + team2_units if u.is_alive()]
+                    all_units.sort(key=lambda u: (u.position[0]*board.size[1] + u.position[1]))
                     paused = True
                     sim_progress = 0.0
                     continue

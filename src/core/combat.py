@@ -152,6 +152,9 @@ class CombatEngine:
         Execute one frame with delayed action resolution.
         """
         self.frame_number += 1
+
+        # Sort units by position for consistent processing order
+
         # Phase 1: Execute actions that are ready this frame
         self._execute_queued_actions()
         
@@ -160,6 +163,7 @@ class CombatEngine:
         
         # Phase 3: Clean up dead units
         self._cleanup_dead_units(all_units)
+
     
     def _execute_queued_actions(self):
         """Execute all actions that are scheduled to resolve this frame."""
@@ -482,6 +486,10 @@ class CombatEngine:
                 
                 # Cancel any pending actions from this dead unit
                 self.action_queue = [action for action in self.action_queue if action.unit != unit]
+        
+        # Finally, filter out dead units from the all_units list. Note that all_units is passed by reference, we need to use slice assignment to modify it in place.
+        all_units[:] = [u for u in all_units if u.is_alive()]
+        all_units.sort(key=lambda u: (u.position[0]*self.board.size[1] + u.position[1]) if u.position else float('inf'))
 
     def _find_target(self, unit: Unit, enemies: List[Unit]) -> Optional[Unit]:
         """Find the best target for the unit."""

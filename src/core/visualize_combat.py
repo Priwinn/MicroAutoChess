@@ -84,7 +84,7 @@ def main():
                     try:
                         if speed_up_rect is not None and speed_up_rect.collidepoint(event.pos):
                             try:
-                                engine_fps = min(40, int(engine_fps * 2))
+                                engine_fps = min(80, int(engine_fps * 2))
                             except Exception:
                                 engine_fps = 60
                             continue
@@ -190,11 +190,11 @@ def main():
                                 pause_r = visual.get_pause_button_rect()
                                 # align shop left with board left offset so it sits directly below the board
                                 shop_x = visual.left_offset + visual.margin
-                                shop_w = pause_r.right - shop_x
+                                shop_w = 5*spawn0.w + 4*visual.cell_radius//6.5  # 5 buttons + 4 spacings of 8px
                                 # use a slightly taller shop rectangle to make selling easier
-                                shop_h = int(spawn0.h * 1.2)
+                                shop_h = int(spawn0.h * 1.5)
                                 # anchor shop at bottom of window so it doesn't overlap the board
-                                shop_y = visual.window_size[1] - shop_h - visual.margin
+                                shop_y = visual.window_size[1] - spawn0.h - visual.margin
                                 shop_rect = pygame.Rect(int(shop_x), int(shop_y), int(shop_w), int(shop_h))
                             except Exception:
                                 shop_rect = None
@@ -331,10 +331,10 @@ def main():
                         pause_r = visual.get_pause_button_rect()
                         # align shop left with board left offset so it sits directly below the board
                         shop_x = visual.left_offset + visual.margin
-                        shop_w = pause_r.right - shop_x
-                        shop_h = int(spawn0.h * 1.2)
+                        shop_w = 5*spawn0.w + 4*visual.cell_radius//6.5  # 5 buttons + 4 spacings of 8px
+                        shop_h = int(spawn0.h * 1.5)
                         # anchor shop at bottom of window so it doesn't overlap the board
-                        shop_y = visual.window_size[1] - shop_h - visual.margin
+                        shop_y = visual.window_size[1] - spawn0.h - visual.margin
                         shop_rect = pygame.Rect(int(shop_x), int(shop_y), int(shop_w), int(shop_h))
                         # highlight shop area slightly
                         highlight = pygame.Surface((shop_rect.w, shop_rect.h), pygame.SRCALPHA)

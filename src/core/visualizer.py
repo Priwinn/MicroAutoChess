@@ -787,9 +787,9 @@ class PygameBoardVisualizer:
     def get_pause_button_rect(self):
         """Return a pygame.Rect for the pause/start button placed below the board's bottom-right."""
         # approximate board pixel size (matches estimation in __init__)
-        btn_w = max(80, int(self.cell_radius * 3))
+        btn_w = max(80, int(self.cell_radius * 2.5))
         # make pause/start button taller for easier interaction
-        btn_h = max(44, int(self.cell_radius * 0.95))
+        btn_h = max(44, int(self.cell_radius * 1.5))
         # place at bottom-right of the window with margin
         bx = self.window_size[0] - btn_w - self.margin
         by = self.window_size[1] - btn_h - self.margin
@@ -843,9 +843,8 @@ class PygameBoardVisualizer:
         index: 0-based index of the button
         total: total buttons in the row
         """
-        btn_w = int(self.cell_radius * 3)
-        # make spawn buttons taller to match shop area
-        btn_h = int(self.cell_radius * 2)
+        btn_w = int(self.cell_radius * 2.5)
+        btn_h = int(self.cell_radius * 1.5)
         # start x aligned with pause button area left edge
         base_rect = self.get_pause_button_rect()
         spacing = 8
@@ -854,7 +853,13 @@ class PygameBoardVisualizer:
         if getattr(self, 'spawn_start_x', None) is not None:
             start_x = int(self.spawn_start_x)
         else:
-            start_x = max(self.margin, base_rect.x - total_w - 16)
+            # Center the spawn row horizontally under the board grid area.
+            grid_pixel_w = int(self.cell_radius * math.sqrt(3) * (self.board.width + 0.5))
+            board_left = int(self.left_offset + self.margin)
+            start_x = board_left + (grid_pixel_w - total_w) // 2
+            # Clamp to window bounds / margins
+            start_x = max(self.margin, start_x)
+            start_x = min(start_x, self.window_size[0] - total_w - self.margin)
         bx = start_x + index * (btn_w + spacing)
         by = base_rect.y
         return pygame.Rect(int(bx), int(by), int(btn_w), int(btn_h))
@@ -896,7 +901,7 @@ class PygameBoardVisualizer:
             col = (180, 180, 180) if disabled else (255, 255, 255)
             lab_surf = self.tooltip_font.render(label, True, col)
             lab_rect = lab_surf.get_rect(center=(rect.w // 2, rect.h // 2))
-            surf.blit(lab_surf, lab_rect)
+            surf.blit(lab_surf, lab_rect.topleft)
             self.screen.blit(surf, (rect.x, rect.y))
 
             # If mouse is hovering this button, draw a tooltip describing the unit and cost

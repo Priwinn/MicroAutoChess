@@ -53,11 +53,8 @@ def main():
     dragged_unit = None
     drag_from = None
     drag_mouse_pos = (0, 0)
-    # player budget is managed by PvE manager
-    try:
-        player_budget = pve_manager.player_budget
-    except Exception:
-        player_budget = 4
+
+
     try:
         while running:
             # ensure spawn button positions used for input match drawing
@@ -116,61 +113,52 @@ def main():
                     except Exception:
                         pass
                     # check spawn buttons
-                    try:
-                        spawn_types = [UnitType.WARRIOR, UnitType.ARCHER, UnitType.MAGE, UnitType.TANK, UnitType.ASSASSIN]
-                        spawn_specs = []
-                        for ut in spawn_types:
-                            try:
-                                tmp = Unit(unit_type=ut, rarity=UnitRarity.COMMON, team=2, level=1)
-                                cost = tmp.get_cost()
-                            except Exception:
-                                cost = 1
-                            spawn_specs.append((ut, cost))
 
-                        for i, (ut, cost) in enumerate(spawn_specs):
-                            rect = visual.get_spawn_button_rect(i, total=len(spawn_specs))
-                            if rect.collidepoint(event.pos):
-                                # check budget (managed by pve_manager)
-                                if cost > getattr(pve_manager, 'player_budget', player_budget):
-                                    break
-                                #Only allow spawning if combat hasn't started yet
-                                if not paused or engine.frame_number > 0:
-                                    break
-                                # find first empty initial cell for team 2
-                                valid = board.get_initial_positions(2)
-                                target = None
-                                for pos in valid:
-                                    c = board.get_cell(pos)
-                                    if c.is_empty():
-                                        target = pos
-                                        break
-                                if target is not None:
-                                    # create unit and place
-                                    new_u = Unit(unit_type=ut, rarity=UnitRarity.COMMON, team=2, level=1)
-                                    new_u.current_health = new_u.get_max_health()
-                                    new_u.current_mana = 0
-                                    board.place_unit(new_u, target)
-                                    team2_units.append(new_u)
-                                    all_units.append(new_u)
-                                    all_units.sort(key=lambda u: (u.position[0]*board.size[1] + u.position[1]))
+                    spawn_types = [UnitType.WARRIOR, UnitType.ARCHER, UnitType.MAGE, UnitType.TANK, UnitType.ASSASSIN]
+                    spawn_specs = []
+                    for ut in spawn_types:
+                        try:
+                            tmp = Unit(unit_type=ut, rarity=UnitRarity.COMMON, team=2, level=1)
+                            cost = tmp.get_cost()
+                        except Exception:
+                            cost = 1
+                        spawn_specs.append((ut, cost))
 
-                                    # deduct budget from PvE manager
-                                    try:
-                                        pve_manager.player_budget = int(pve_manager.player_budget) - int(cost)
-                                    except Exception:
-                                        try:
-                                            player_budget -= cost
-                                        except Exception:
-                                            pass
-                                    # update engine teams
-                                    try:
-                                        engine.set_teams(team1_units, team2_units)
-                                    except Exception:
-                                        pass
-                                # consume click
+                    for i, (ut, cost) in enumerate(spawn_specs):
+                        rect = visual.get_spawn_button_rect(i, total=len(spawn_specs))
+                        if rect.collidepoint(event.pos):
+                            # check budget (managed by pve_manager)
+                            if cost > pve_manager.player_budget:
                                 break
-                    except Exception:
-                        pass
+                            #Only allow spawning if combat hasn't started yet
+                            if not paused or engine.frame_number > 0:
+                                break
+                            # find first empty initial cell for team 2
+                            valid = board.get_initial_positions(2)
+                            target = None
+                            for pos in valid:
+                                c = board.get_cell(pos)
+                                if c.is_empty():
+                                    target = pos
+                                    break
+                            if target is not None:
+                                # create unit and place
+                                new_u = Unit(unit_type=ut, rarity=UnitRarity.COMMON, team=2, level=1)
+                                new_u.current_health = new_u.get_max_health()
+                                new_u.current_mana = 0
+                                board.place_unit(new_u, target)
+                                team2_units.append(new_u)
+                                all_units.append(new_u)
+                                all_units.sort(key=lambda u: (u.position[0]*board.size[1] + u.position[1]))
+
+                                # deduct budget from PvE manager
+                                pve_manager.player_budget = int(pve_manager.player_budget) - int(cost)
+
+                                # update engine teams
+                                engine.set_teams(team1_units, team2_units)
+
+                            # consume click
+                            break
                     # If combat hasn't started (frame 0) and paused, allow dragging units
                     try:
                         if paused and engine.frame_number == 0:
@@ -204,7 +192,7 @@ def main():
                                 shop_x = visual.left_offset + visual.margin
                                 shop_w = pause_r.right - shop_x
                                 # use a slightly taller shop rectangle to make selling easier
-                                shop_h = max(spawn0.h, pause_r.h, int(spawn0.h * 1.2))
+                                shop_h = int(spawn0.h * 1.2)
                                 # anchor shop at bottom of window so it doesn't overlap the board
                                 shop_y = visual.window_size[1] - shop_h - visual.margin
                                 shop_rect = pygame.Rect(int(shop_x), int(shop_y), int(shop_w), int(shop_h))
@@ -218,24 +206,15 @@ def main():
                                     refund = dragged_unit.get_cost()
                                 except Exception:
                                     refund = getattr(dragged_unit, 'cost', 1)
-                                try:
-                                    pve_manager.player_budget = int(pve_manager.player_budget) + int(refund)
-                                except Exception:
-                                    try:
-                                        player_budget += int(refund)
-                                    except Exception:
-                                        pass
+                                pve_manager.player_budget = int(pve_manager.player_budget) + int(refund)
+                                
                                 # remove from team2 units list
-                                try:
-                                    if dragged_unit in team2_units:
-                                        team2_units.remove(dragged_unit)
-                                except Exception:
-                                    pass
+                                if dragged_unit in team2_units:
+                                    team2_units.remove(dragged_unit)
+                                    all_units.remove(dragged_unit)
+
                                 # update engine teams
-                                try:
-                                    engine.set_teams(team1_units, team2_units)
-                                except Exception:
-                                    pass
+                                engine.set_teams(team1_units, team2_units)
                                 sold = True
 
                             if not sold:
@@ -317,10 +296,8 @@ def main():
             except Exception:
                 visual.spawn_start_x = None
             # query budget from PvE manager for display
-            try:
-                current_budget = int(pve_manager.player_budget)
-            except Exception:
-                current_budget = player_budget
+            current_budget = int(pve_manager.player_budget)
+
             visual.draw_spawn_buttons(spawn_specs, budget=current_budget)
             # clear override so other code paths aren't affected
             try:
@@ -331,10 +308,7 @@ def main():
             try:
                 if spawn_specs:
                     r0 = visual.get_spawn_button_rect(0, total=len(spawn_specs))
-                    try:
-                        budget_val = int(pve_manager.player_budget)
-                    except Exception:
-                        budget_val = player_budget
+                    budget_val = int(pve_manager.player_budget)
                     budget_surf = visual.tooltip_font.render(f"Budget: {budget_val}", True, (240, 240, 160))
                     visual.screen.blit(budget_surf, (r0.x, r0.y - budget_surf.get_height() - 6))
             except Exception:
@@ -358,7 +332,7 @@ def main():
                         # align shop left with board left offset so it sits directly below the board
                         shop_x = visual.left_offset + visual.margin
                         shop_w = pause_r.right - shop_x
-                        shop_h = max(spawn0.h, pause_r.h, int(spawn0.h * 1.2))
+                        shop_h = int(spawn0.h * 1.2)
                         # anchor shop at bottom of window so it doesn't overlap the board
                         shop_y = visual.window_size[1] - shop_h - visual.margin
                         shop_rect = pygame.Rect(int(shop_x), int(shop_y), int(shop_w), int(shop_h))
@@ -373,11 +347,13 @@ def main():
                             big_font = pygame.font.SysFont('Arial', max(12, int(visual.tooltip_font.get_height() * 2)))
                         except Exception:
                             big_font = visual.tooltip_font
+                        
+                        pad = visual.cell_radius // 6
                         tip_surf = big_font.render(tip, True, (240, 240, 240))
                         bx = shop_rect.centerx - tip_surf.get_width() // 2
-                        by = shop_rect.y + 6
+                        by = shop_rect.y + pad
                         # small background for text
-                        pad = 6
+                        
                         ts = pygame.Surface((tip_surf.get_width() + pad*2, tip_surf.get_height() + pad), pygame.SRCALPHA)
                         pygame.draw.rect(ts, (30, 30, 30, 220), (0, 0, ts.get_width(), ts.get_height()), border_radius=6)
                         ts.blit(tip_surf, (pad, 4))
@@ -450,7 +426,6 @@ def main():
                         display_win_screen(visual)
                         pve_manager = PvERoundManager(configs=round_configs)
                         board, team1_units, team2_units = pve_manager.setup_round()
-                        player_budget = pve_manager.player_budget
                         visual = PygameBoardVisualizer(board, render_fps=render_fps, cell_radius=40)
                         engine = CombatEngine(board, combat_seed=42)
                         engine.set_teams(team1_units, team2_units)

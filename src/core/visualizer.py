@@ -6,6 +6,7 @@ from collections import defaultdict
 from combat import CombatEngine
 from constant_types import CombatAction, CombatEventType
 from units import Unit, UnitRarity
+import pygame.display
 
 
 def oddr_to_axial(position: Tuple[int, int]) -> Tuple[int, int]:
@@ -40,10 +41,13 @@ class PygameBoardVisualizer:
     """
 
     def __init__(self, board, render_fps: int = 60, cell_radius: int = 28, margin: int = 16):
+        # Initialize pygame before using display APIs
+        pygame.init()
         pygame.font.init()
         self.board = board
-        # Desired fullscreen/window resolution
-        desired_w, desired_h = (1920, 1080)
+        # Desired fullscreen/window resolution (use current screen resolution)
+        info = pygame.display.Info()
+        desired_w, desired_h = info.current_w, info.current_h
 
         # Start with requested cell radius, compute estimated original sizes
         orig_cell = cell_radius
@@ -89,7 +93,6 @@ class PygameBoardVisualizer:
         # Optional override for spawn button start x (align spawn buttons to shop)
         self.spawn_start_x: int | None = None
 
-        pygame.init()
         self.screen = pygame.display.set_mode(self.window_size)
         pygame.display.set_caption('MicroAutoChess - Visualizer')
         self.clock = pygame.time.Clock()
@@ -840,9 +843,9 @@ class PygameBoardVisualizer:
         index: 0-based index of the button
         total: total buttons in the row
         """
-        btn_w = max(84, int(self.cell_radius * 3))
+        btn_w = int(self.cell_radius * 3)
         # make spawn buttons taller to match shop area
-        btn_h = max(44, int(self.cell_radius * 0.95))
+        btn_h = int(self.cell_radius * 2)
         # start x aligned with pause button area left edge
         base_rect = self.get_pause_button_rect()
         spacing = 8
@@ -862,105 +865,100 @@ class PygameBoardVisualizer:
         `unit_specs` items may be either a UnitType or a (UnitType, cost) tuple.
         If `budget` is provided, buttons with cost > budget are drawn disabled.
         """
-        try:
-            total = len(unit_specs)
-            mx, my = pygame.mouse.get_pos()
-            hover_drawn = False
-            for i, spec in enumerate(unit_specs):
-                rect = self.get_spawn_button_rect(i, total=total)
-                surf = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+        total = len(unit_specs)
+        mx, my = pygame.mouse.get_pos()
+        hover_drawn = False
+        for i, spec in enumerate(unit_specs):
+            rect = self.get_spawn_button_rect(i, total=total)
+            surf = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
 
-                # Determine label and cost
-                if isinstance(spec, tuple) and len(spec) >= 2:
-                    ut, cost = spec[0], spec[1]
-                else:
-                    ut, cost = spec, None
+            # Determine label and cost
+            if isinstance(spec, tuple) and len(spec) >= 2:
+                ut, cost = spec[0], spec[1]
+            else:
+                ut, cost = spec, None
 
-                # disabled if budget provided and cost > budget
-                disabled = False
-                if budget is not None and cost is not None and cost > budget:
-                    disabled = True
+            # disabled if budget provided and cost > budget
+            disabled = False
+            if budget is not None and cost is not None and cost > budget:
+                disabled = True
 
-                bg_col = (100, 100, 100) if disabled else (60, 60, 60)
-                pygame.draw.rect(surf, bg_col, (0, 0, rect.w, rect.h), border_radius=6)
-                pygame.draw.rect(surf, (140, 140, 140), (0, 0, rect.w, rect.h), 1, border_radius=6)
-                # label
+            bg_col = (100, 100, 100) if disabled else (60, 60, 60)
+            pygame.draw.rect(surf, bg_col, (0, 0, rect.w, rect.h), border_radius=6)
+            pygame.draw.rect(surf, (140, 140, 140), (0, 0, rect.w, rect.h), 1, border_radius=6)
+            # label
+            try:
+                label = ut.value.capitalize() if hasattr(ut, 'value') else str(ut).capitalize()
+            except Exception:
+                label = str(ut)
+            if cost is not None:
+                label = f"{label} ({int(cost)})"
+            col = (180, 180, 180) if disabled else (255, 255, 255)
+            lab_surf = self.tooltip_font.render(label, True, col)
+            lab_rect = lab_surf.get_rect(center=(rect.w // 2, rect.h // 2))
+            surf.blit(lab_surf, lab_rect)
+            self.screen.blit(surf, (rect.x, rect.y))
+
+            # If mouse is hovering this button, draw a tooltip describing the unit and cost
+            if not hover_drawn and rect.collidepoint((mx, my)):
+                hover_drawn = True
+                # attempt to instantiate a temporary unit to get spell description
                 try:
-                    label = ut.value.capitalize() if hasattr(ut, 'value') else str(ut).capitalize()
+                    tmp_unit = Unit(unit_type=ut, rarity=UnitRarity.COMMON, team=2, level=1)
+                    spell = getattr(tmp_unit.base_stats, 'spell', None)
+                    desc = spell.description() if spell is not None else 'No spell.'
                 except Exception:
-                    label = str(ut)
-                if cost is not None:
-                    label = f"{label} ({int(cost)})"
-                col = (180, 180, 180) if disabled else (255, 255, 255)
-                lab_surf = self.tooltip_font.render(label, True, col)
-                lab_rect = lab_surf.get_rect(center=(rect.w // 2, rect.h // 2))
-                surf.blit(lab_surf, lab_rect)
-                self.screen.blit(surf, (rect.x, rect.y))
+                    desc = 'No description available.'
 
-                # If mouse is hovering this button, draw a tooltip describing the unit and cost
-                try:
-                    if not hover_drawn and rect.collidepoint((mx, my)):
-                        hover_drawn = True
-                        # attempt to instantiate a temporary unit to get spell description
-                        try:
-                            tmp_unit = Unit(unit_type=ut, rarity=UnitRarity.COMMON, team=2, level=1)
-                            spell = getattr(tmp_unit.base_stats, 'spell', None)
-                            desc = spell.description() if spell is not None else 'No spell.'
-                        except Exception:
-                            desc = 'No description available.'
+                title = ut.value.capitalize() if hasattr(ut, 'value') else str(ut).capitalize()
+                cost_text = f"Cost: {int(cost)}" if cost is not None else ''
 
-                        title = ut.value.capitalize() if hasattr(ut, 'value') else str(ut).capitalize()
-                        cost_text = f"Cost: {int(cost)}" if cost is not None else ''
+                # Wrap description
+                max_width = min(self.tooltip_max_width, rect.w * 4)
+                words = desc.split()
+                cur = ''
+                desc_lines = []
+                for w in words:
+                    test = (cur + ' ' + w).strip()
+                    surf_test = self.tooltip_font.render(test, True, (255, 255, 255))
+                    if surf_test.get_width() > max_width and cur:
+                        desc_lines.append(cur)
+                        cur = w
+                    else:
+                        cur = test
+                if cur:
+                    desc_lines.append(cur)
 
-                        # Wrap description
-                        max_width = min(self.tooltip_max_width, rect.w * 4)
-                        words = desc.split()
-                        cur = ''
-                        desc_lines = []
-                        for w in words:
-                            test = (cur + ' ' + w).strip()
-                            surf_test = self.tooltip_font.render(test, True, (255, 255, 255))
-                            if surf_test.get_width() > max_width and cur:
-                                desc_lines.append(cur)
-                                cur = w
-                            else:
-                                cur = test
-                        if cur:
-                            desc_lines.append(cur)
+                # build tooltip surface
+                pad = 6
+                title_s = self.tooltip_font.render(title, True, (250, 250, 210))
+                cost_s = self.tooltip_font.render(cost_text, True, (200, 200, 200)) if cost_text else None
+                desc_surfs = [self.tooltip_font.render(l, True, (230, 230, 230)) for l in desc_lines]
+                content_w = max(title_s.get_width(), *(s.get_width() for s in desc_surfs), cost_s.get_width() if cost_s else 0)
+                box_w = content_w + pad * 2
+                box_h = pad + title_s.get_height() + 6 + (cost_s.get_height() if cost_s else 0) + sum(s.get_height() + 4 for s in desc_surfs) + pad
+                bx = mx + 12
+                by = my + 12
+                if bx + box_w > self.window_size[0] - 4:
+                    bx = mx - box_w - 12
+                if by + box_h > self.window_size[1] - 4:
+                    by = my - box_h - 12
 
-                        # build tooltip surface
-                        pad = 6
-                        title_s = self.tooltip_font.render(title, True, (250, 250, 210))
-                        cost_s = self.tooltip_font.render(cost_text, True, (200, 200, 200)) if cost_text else None
-                        desc_surfs = [self.tooltip_font.render(l, True, (230, 230, 230)) for l in desc_lines]
-                        content_w = max(title_s.get_width(), *(s.get_width() for s in desc_surfs), cost_s.get_width() if cost_s else 0)
-                        box_w = content_w + pad * 2
-                        box_h = pad + title_s.get_height() + 6 + (cost_s.get_height() if cost_s else 0) + sum(s.get_height() + 4 for s in desc_surfs) + pad
-                        bx = mx + 12
-                        by = my + 12
-                        if bx + box_w > self.window_size[0] - 4:
-                            bx = mx - box_w - 12
-                        if by + box_h > self.window_size[1] - 4:
-                            by = my - box_h - 12
+                tsurf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+                pygame.draw.rect(tsurf, (30, 30, 30, 220), (0, 0, box_w, box_h), border_radius=6)
+                pygame.draw.rect(tsurf, (120, 120, 120), (0, 0, box_w, box_h), 1, border_radius=6)
+                yoff = pad
+                tsurf.blit(title_s, (pad, yoff))
+                yoff += title_s.get_height() + 6
+                if cost_s:
+                    tsurf.blit(cost_s, (pad, yoff))
+                    yoff += cost_s.get_height() + 6
+                for s in desc_surfs:
+                    tsurf.blit(s, (pad, yoff))
+                    yoff += s.get_height() + 4
 
-                        tsurf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
-                        pygame.draw.rect(tsurf, (30, 30, 30, 220), (0, 0, box_w, box_h), border_radius=6)
-                        pygame.draw.rect(tsurf, (120, 120, 120), (0, 0, box_w, box_h), 1, border_radius=6)
-                        yoff = pad
-                        tsurf.blit(title_s, (pad, yoff))
-                        yoff += title_s.get_height() + 6
-                        if cost_s:
-                            tsurf.blit(cost_s, (pad, yoff))
-                            yoff += cost_s.get_height() + 6
-                        for s in desc_surfs:
-                            tsurf.blit(s, (pad, yoff))
-                            yoff += s.get_height() + 4
+                self.screen.blit(tsurf, (bx, by))
 
-                        self.screen.blit(tsurf, (bx, by))
-                except Exception:
-                    pass
-        except Exception:
-            pass
 
     def get_cell_center(self, position: Tuple[int, int]) -> Tuple[int, int]:
         """Return pixel center (x,y) for a board cell position (x,y)."""

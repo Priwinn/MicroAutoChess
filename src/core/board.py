@@ -168,6 +168,13 @@ class Board:
         """Calculate Euclidean distance between two positions."""
         return np.sqrt((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2)
     
+    def pathfind_distance(self, start: Tuple[int, int], target: Tuple[int, int]) -> float:
+        """Calculate pathfinding distance between two positions using A*."""
+        path = self.find_path(start, target)
+        if not path:
+            return float('inf')
+        return len(path) - 1  # Number of steps is path length minus 1
+    
     def get_adjacent_positions(self, position: Tuple[int, int]) -> List[Tuple[int, int]]:
         """Get valid adjacent positions."""
         x, y = position
@@ -220,9 +227,49 @@ class Board:
                         positions.append((x, y))
         return positions
     
-
     def find_path(self, start: Tuple[int, int], target: Tuple[int, int]) -> List[Tuple[int, int]]:
         """Simple pathfinding using A* algorithm."""
+
+        if not self.is_valid_position(start) or not self.is_valid_position(target):
+            raise ValueError("Start or target position is out of bounds")
+
+        # A* algorithm setup
+        open_set = PriorityQueue()
+        open_set.put((0, start))
+        came_from = {start: None}
+        g_score = {start: 0.0}
+        f_score = {start: self.l1_distance(start, target)}
+
+        while not open_set.empty():
+            current = open_set.get()[1]
+
+            if current == target:
+                total_path = [current]
+                while current in came_from and came_from[current] is not None:
+                    current = came_from[current]
+                    total_path.append(current)
+                total_path.reverse()
+                return total_path
+
+            for neighbor in self.get_adjacent_positions(current):
+
+                if not self.get_cell(neighbor).is_empty() and neighbor != target:
+                    continue
+                tentative_g_score = g_score[current] + 1  # Assume cost is 1
+
+                if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                    came_from[neighbor] = current
+                    g_score[neighbor] = tentative_g_score
+                    f_score[neighbor] = tentative_g_score + self.l1_distance(neighbor, target)
+                    if neighbor not in [i for i in open_set.queue]:
+                        open_set.put((f_score[neighbor], neighbor))
+
+        return []
+
+
+    def find_path_guided(self, start: Tuple[int, int], target: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """Simple pathfinding using A* algorithm. Prefer horizontal movement when distances are equal and
+          prefer moves that get closer to target according to l2 distance."""
         
         if not self.is_valid_position(start) or not self.is_valid_position(target):
             raise ValueError("Start or target position is out of bounds")
@@ -266,6 +313,7 @@ class Board:
                         open_set.put((f_score[neighbor], neighbor))
 
         return []
+
 
     
     

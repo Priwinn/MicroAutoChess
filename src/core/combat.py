@@ -363,7 +363,7 @@ class CombatEngine:
             return None
         
         # Find path towards target
-        path = self.board.find_path(unit.position, target.position)
+        path = self.board.find_path_guided(unit.position, target.position)
         
         if path:
             new_position = path[1]
@@ -499,7 +499,7 @@ class CombatEngine:
         # This allows the unit to keep attacking the same target if it is still valid and chase it if one cell movement is enough to reach it
         if unit.current_target and \
            unit.current_target in enemies and \
-           self.board.l2_distance(unit.position, unit.current_target.position) <= unit.base_stats.range + 1.66:
+           self.board.pathfind_distance(unit.position, unit.current_target.position) <= unit.base_stats.range + 1.66:
             return unit.current_target
         
         # Targeting: closest enemy
@@ -511,7 +511,7 @@ class CombatEngine:
             if not enemy.position:
                 continue
             
-            distance = self.board.l2_distance(unit.position, enemy.position)
+            distance = self.board.pathfind_distance(unit.position, enemy.position)
             if distance < min_distance:
                 min_distance = distance
                 closest_enemy = enemy

@@ -175,6 +175,17 @@ class Board:
             return float('inf')
         return len(path) - 1  # Number of steps is path length minus 1
     
+    def pathfind_distance_to_range(self, start: Tuple[int, int], target: Tuple[int, int], attack_range: int) -> float:
+        """Calculate pathfinding distance to get within attack range of target."""
+        target_positions = self.get_positions_in_l2_range(target, attack_range)
+        target_positions = [pos for pos in target_positions if self.get_cell(pos).is_empty() or pos == start]
+        min_distance = float('inf')
+        for pos in target_positions:
+            distance = self.pathfind_distance(start, pos)
+            if distance < min_distance:
+                min_distance = distance
+        return min_distance
+    
     def get_adjacent_positions(self, position: Tuple[int, int]) -> List[Tuple[int, int]]:
         """Get valid adjacent positions."""
         x, y = position
@@ -205,6 +216,22 @@ class Board:
                 new_pos = (position[0] + dx, position[1] + dy)
                 if self.is_valid_position(new_pos):
                     positions_in_range.append(new_pos)
+        return positions_in_range
+    
+    def get_positions_in_l2_range(self, position: Tuple[int, int], l2_range: float) -> List[Tuple[int, int]]:
+        """Get all positions within a certain Euclidean distance from a position."""
+        positions_in_range = []
+        x0, y0 = position
+        min_x = max(0, int(x0 - l2_range))
+        max_x = min(self.width - 1, int(x0 + l2_range))
+        min_y = max(0, int(y0 - l2_range))
+        max_y = min(self.height - 1, int(y0 + l2_range))
+        
+        for x in range(min_x, max_x + 1):
+            for y in range(min_y, max_y + 1):
+                if self.l2_distance(position, (x, y)) <= l2_range:
+                    positions_in_range.append((x, y))
+        
         return positions_in_range
 
     def get_initial_positions(self, team: int) -> List[Tuple[int, int]]:
@@ -314,7 +341,18 @@ class Board:
 
         return []
 
-
+    def find_path_to_range_guided(self, start: Tuple[int, int], target: Tuple[int, int], attack_range: int) -> List[Tuple[int, int]]:
+        """Find path to get within attack range of target using A* algorithm with guided movement."""
+        target_positions = self.get_positions_in_l2_range(target, attack_range)
+        target_positions = [pos for pos in target_positions if self.get_cell(pos).is_empty() or pos == start]
+        shortest_path = []
+        min_length = float('inf')
+        for pos in target_positions:
+            path = self.find_path_guided(start, pos)
+            if path and len(path) < min_length:
+                min_length = len(path)
+                shortest_path = path
+        return shortest_path
     
     
     def to_array(self) -> np.ndarray:
@@ -490,6 +528,19 @@ class HexBoard(Board):
                 x,y = axial_to_oddr((q0 + q, r0 + r))
                 if self.is_valid_position((x, y)):
                     results.append((x, y))
+        return results
+    
+    def get_positions_in_l2_range(self, position, l2_range):
+        """Get all positions within a certain Euclidean distance from a position in hexagonal grid."""
+        results = []
+        (q0, r0) = oddr_to_axial(position)
+        max_range = int(l2_range * 2)  # Approximate max range in hex steps, this is a safe overestimate
+        for q in range(-max_range, max_range + 1):
+            for r in range(max(-max_range, -q - max_range), min(max_range, -q + max_range) + 1):
+                x,y = axial_to_oddr((q0 + q, r0 + r))
+                if self.is_valid_position((x, y)):
+                    if self.l2_distance(position, (x, y)) <= l2_range:
+                        results.append((x, y))
         return results
 
     def create_hex_cell(self, content=""):

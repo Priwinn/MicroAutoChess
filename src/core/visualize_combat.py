@@ -84,9 +84,9 @@ def main():
                     try:
                         if speed_up_rect is not None and speed_up_rect.collidepoint(event.pos):
                             try:
-                                engine_fps = min(80, int(engine_fps * 2))
+                                engine_fps = min(40, int(engine_fps * 2))
                             except Exception:
-                                engine_fps = 60
+                                engine_fps = 40
                             continue
                         if speed_down_rect is not None and speed_down_rect.collidepoint(event.pos):
                             try:

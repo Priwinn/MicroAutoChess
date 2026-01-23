@@ -363,7 +363,7 @@ class CombatEngine:
             return None
         
         # Find path towards target
-        path = self.board.find_path_guided(unit.position, target.position)
+        path = self.board.find_path_to_range_guided(unit.position, target.position, unit.base_stats.range)
         
         if path:
             new_position = path[1]
@@ -499,10 +499,10 @@ class CombatEngine:
         # This allows the unit to keep attacking the same target if it is still valid and chase it if one cell movement is enough to reach it
         if unit.current_target and \
            unit.current_target in enemies and \
-           self.board.pathfind_distance(unit.position, unit.current_target.position) <= unit.base_stats.range + 1.66:
+           self.board.pathfind_distance_to_range(unit.position, unit.current_target.position, unit.base_stats.range) <= 1.66:
             return unit.current_target
         
-        # Targeting: closest enemy
+        # Targeting: Find the closest enemy by pathfinding distance to within attack range
         closest_enemy = None
         min_distance = float('inf')
         best_count = 1 # This should be unecessary, but just in case.
@@ -511,15 +511,25 @@ class CombatEngine:
             if not enemy.position:
                 continue
             
-            distance = self.board.pathfind_distance(unit.position, enemy.position)
+            distance = self.board.pathfind_distance_to_range(unit.position, enemy.position, unit.base_stats.range)
+            if distance == float('inf'):
+                continue
             if distance < min_distance:
                 min_distance = distance
                 closest_enemy = enemy
                 best_count = 1
-            # If the distance is the same, randomly select one of the closest enemies, scaling by the count ensures that each member of the tie can be selected with equal probability
-            if (distance == min_distance and self.rng.random() < 1/best_count):
-                closest_enemy = enemy
-                best_count += 1
+
+            #If there are ties, use l2 distance to break them
+            elif distance == min_distance:
+                l2_distance_current = self.board.l2_distance(unit.position, closest_enemy.position)
+                l2_distance_new = self.board.l2_distance(unit.position, enemy.position)
+                if l2_distance_new < l2_distance_current:
+                    closest_enemy = enemy
+                # If the l2 distance is the same, randomly select one of the closest enemies, scaling by the count ensures that each member of the tie can be selected with equal probability
+                elif l2_distance_new == l2_distance_current:
+                    if self.rng.random() < 1/best_count:
+                        closest_enemy = enemy
+                    best_count += 1
 
         unit.current_target = closest_enemy  # Set current target for the unit
         

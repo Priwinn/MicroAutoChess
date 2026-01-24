@@ -18,6 +18,7 @@ from board import Board
 from units import Unit, UnitType
 from combat_event import CombatEvent
 import global_log
+from math_utils import less_than_or_equal
 # from src.core.player import Player
 # from src.core.spells import AbstractSpell, FireballSpell, SelfHealSpell
 
@@ -309,8 +310,7 @@ class CombatEngine:
                 raise ValueError("Invalid prepare for spell")
 
         
-        # Find target (closest enemy). 
-        # TODO: Need to use path distance instead of l2 distance for better targeting (for melee units especially)
+        # Find target (closest enemy to be in range in terms of pathfinding distance)
         target = self._find_target(unit, enemies)
         
         if not target or not target.position:
@@ -321,7 +321,7 @@ class CombatEngine:
         distance = self.board.l2_distance(unit.position, target.position)
 
         # If the unit has a ranged spell and enough mana, it can cast it if the target is within spell range
-        if unit.current_mana >= unit.base_stats.max_mana and unit.base_stats.spell.ranged and distance <= unit.base_stats.spell.range + 0.01:
+        if unit.current_mana >= unit.base_stats.max_mana and unit.base_stats.spell.ranged and less_than_or_equal(distance, unit.base_stats.spell.range):
             # If the unit has enough mana and a ranged spell, it can cast it
             # Plan spell cast
             valid_prepare = unit.base_stats.spell.prepare(unit, self.board)
@@ -523,13 +523,14 @@ class CombatEngine:
             elif distance == min_distance:
                 l2_distance_current = self.board.l2_distance(unit.position, closest_enemy.position)
                 l2_distance_new = self.board.l2_distance(unit.position, enemy.position)
-                if l2_distance_new < l2_distance_current:
-                    closest_enemy = enemy
                 # If the l2 distance is the same, randomly select one of the closest enemies, scaling by the count ensures that each member of the tie can be selected with equal probability
-                elif l2_distance_new == l2_distance_current:
+                if math.isclose(l2_distance_new, l2_distance_current):
                     if self.rng.random() < 1/best_count:
                         closest_enemy = enemy
                     best_count += 1
+                elif less_than_or_equal(l2_distance_new, l2_distance_current):
+                    closest_enemy = enemy
+
 
         unit.current_target = closest_enemy  # Set current target for the unit
         

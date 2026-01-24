@@ -14,6 +14,7 @@ from queue import PriorityQueue
 # from src.numba_classes.numba_pq import PurePythonPriorityQueue as PriorityQueue
 # from src.numba_classes.numba_pq import PriorityQueue as PriorityQueue
 from units import Unit, UnitType
+from math_utils import less_than_or_equal
 
 
 
@@ -229,7 +230,7 @@ class Board:
         
         for x in range(min_x, max_x + 1):
             for y in range(min_y, max_y + 1):
-                if self.l2_distance(position, (x, y)) <= l2_range + 0.0001:
+                if less_than_or_equal(self.l2_distance(position, (x, y)), l2_range):
                     positions_in_range.append((x, y))
         
         return positions_in_range
@@ -345,6 +346,8 @@ class Board:
         """Find path to get within attack range of target using A* algorithm with guided movement."""
         target_positions = self.get_positions_in_l2_range(target, attack_range)
         target_positions = [pos for pos in target_positions if self.get_cell(pos).is_empty() or pos == start]
+        #Sort target positions by vertical distance to start to prefer horizontal movement
+        target_positions.sort(key=lambda pos: abs(pos[1]-start[1]))
         shortest_path = []
         min_length = float('inf')
         for pos in target_positions:
@@ -539,7 +542,7 @@ class HexBoard(Board):
             for r in range(max(-max_range, -q - max_range), min(max_range, -q + max_range) + 1):
                 x,y = axial_to_oddr((q0 + q, r0 + r))
                 if self.is_valid_position((x, y)):
-                    if self.l2_distance(position, (x, y)) <= l2_range + 0.0001:
+                    if less_than_or_equal(self.l2_distance(position, (x, y)), l2_range):
                         results.append((x, y))
         return results
 

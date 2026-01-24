@@ -76,7 +76,7 @@ class PygameBoardVisualizer:
         # Smaller font for hover tooltips
         # Fonts scaled relative to computed cell radius
         self.tooltip_font = pygame.font.SysFont('Arial', max(9, int(self.cell_radius * 0.45)))
-        self.tooltip_max_width = max(220, int(self.cell_radius * 5))
+        self.tooltip_max_width = int(self.cell_radius * 6.0)
 
         # Reserve extra space to the right for charts / debug panels and bottom for UI
         # Increase default right panel to provide a larger damage meter area
@@ -113,6 +113,8 @@ class PygameBoardVisualizer:
         self.title_font = pygame.font.SysFont('Arial', max(18, int(self.cell_radius * 0.9)))
         # store lightweight unit info (symbol, team) so dead units can still be shown in charts
         self.unit_info = {}
+        # When true, render player's initial placement cells with a highlighted border
+        self.highlight_player_initial_zone = False
 
     def draw_board(self, engine: CombatEngine = None, sim_frame: int = 0, sim_progress: float = 0.0):
         """Draw board and optionally animate pending move actions from engine.
@@ -180,7 +182,7 @@ class PygameBoardVisualizer:
                 if action.action_type == CombatAction.CAST_SPELL and getattr(action, 'spell_instance', None) is not None:
                     spell_name = getattr(action.spell_instance, 'name', None)
                     # only animate Fireball projectiles here
-                    if spell_name == 'Fireball' and action.start_position is not None:
+                    if (spell_name == 'Fireball' or spell_name == 'Spin Slash') and action.start_position is not None:
                         # resolve only if in the future
                         if action.resolution_frame > sim_frame:
                             start_f = action.planned_frame
@@ -224,7 +226,7 @@ class PygameBoardVisualizer:
                         self.spin_animations.append([source.id, now, spin_duration, spin_speed])
                         self._seen_events.add(id(ev))
                 # Spell execution: Fireball AoE
-                if ev.event_type == CombatEventType.SPELL_EXECUTED and ev.spell_name == 'Fireball'and id(ev) not in self._seen_events:
+                if ev.event_type == CombatEventType.SPELL_EXECUTED and (ev.spell_name == 'Fireball' or ev.spell_name == 'Spin Slash') and id(ev) not in self._seen_events:
                     pos = getattr(ev, 'position', None)
                     if pos is None and getattr(ev, 'target', None) and getattr(ev.target, 'position', None):
                         pos = ev.target.position
@@ -329,6 +331,14 @@ class PygameBoardVisualizer:
             #         moving_map.pop(cid, None)
 
         # Draw each cell (but skip drawing units that are currently moving - they'll be drawn interpolated)
+        # Precompute highlighted positions when requested (player initial placement zone)
+        highlighted_positions = set()
+        if getattr(self, 'highlight_player_initial_zone', False):
+            try:
+                highlighted_positions = set(self.board.get_initial_positions(2))
+            except Exception:
+                highlighted_positions = set()
+
         for x in range(self.board.width):
             for y in range(self.board.height):
                 cell = self.board.get_cell((x, y))
@@ -341,7 +351,12 @@ class PygameBoardVisualizer:
                 center_y = int(py + self.margin + self.cell_radius + 4)
 
                 corners = polygon_corners(center_x, center_y, self.cell_radius)
-                pygame.draw.polygon(self.screen, self.grid_color, corners, 2)
+                # If highlighting is enabled and this cell is in the player's initial zone,
+                # draw a white border to indicate valid placement while dragging.
+                if (x, y) in highlighted_positions:
+                    pygame.draw.polygon(self.screen, (255, 255, 255), corners, 2)
+                else:
+                    pygame.draw.polygon(self.screen, self.grid_color, corners, 2)
 
                 if cell and getattr(cell.unit, 'id', None) is not None and cell.unit.id not in moving_map:
                     unit = cell.unit
@@ -694,7 +709,7 @@ class PygameBoardVisualizer:
                     desc_lines.append(cur)
 
                 # Render tooltip box slightly offset from mouse so it doesn't sit under cursor
-                pad = 6
+                pad = self.cell_radius // 2
                 title_surf = self.tooltip_font.render(title, True, (250, 250, 210))
                 desc_surfs = [self.tooltip_font.render(l, True, (230, 230, 230)) for l in desc_lines]
                 # numeric text for hp/mana
@@ -709,13 +724,53 @@ class PygameBoardVisualizer:
                 # Determine box width and height; include space for two small bars and spell name
                 bar_w = min(200, max_width)
                 bar_h = max(6, int(self.cell_radius * 0.18))
+
+                # Prepare stats block (three columns) and include its size when computing tooltip dimensions
+                bs = hovered_unit.base_stats
+                stats = [
+                    ("ATK", str(int(hovered_unit.get_attack()))),
+                    ("SP", f"{getattr(bs, 'spell_power', 0):.0f}"),
+                    ("DEF", str(int(hovered_unit.get_defense()))),
+                    ("RES", str(int(hovered_unit.get_resistance()))),
+                    ("RNG", str(int(getattr(bs, 'range', 1)))),
+                    ("CR", f"{getattr(bs, 'crit_rate', 0.0)*100:.0f}%"),
+                    ("CD", f"{getattr(bs, 'crit_dmg', 1.0):.1f}x"),
+                    ("AS", f"{hovered_unit.get_attack_speed():.2f}"),
+                ]
+                stat_font = self.tooltip_font
+                # Split into four roughly-equal columns
+                n = len(stats)
+                per_col = (n + 3) // 4
+                left_stats = stats[:per_col]
+                midleft_stats = stats[per_col:per_col * 2]
+                midright_stats = stats[per_col * 2:per_col * 3]
+                right_stats = stats[per_col * 3:]
+
+                left_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in left_stats]
+                midleft_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midleft_stats]
+                midright_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midright_stats]
+                right_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in right_stats]
+
+                left_w = max((s.get_width() for s in left_surfs), default=0)
+                midleft_w = max((s.get_width() for s in midleft_surfs), default=0)
+                midright_w = max((s.get_width() for s in midright_surfs), default=0)
+                right_w = max((s.get_width() for s in right_surfs), default=0)
+                gap_cols = 10
+                stats_block_w = left_w + (midleft_w and gap_cols + midleft_w or 0) + (midright_w and gap_cols + midright_w or 0) + (right_w and gap_cols + right_w or 0)
+                # height of stats block is the max column height
+                left_h = sum(s.get_height() + 2 for s in left_surfs)
+                midleft_h = sum(s.get_height() + 2 for s in midleft_surfs)
+                midright_h = sum(s.get_height() + 2 for s in midright_surfs)
+                right_h = sum(s.get_height() + 2 for s in right_surfs)
+                stats_block_h = max(left_h, midleft_h, midright_h, right_h)
+
                 content_w = max(title_surf.get_width(), spell_surf.get_width(), hp_surf.get_width() + bar_w + 8, mana_surf.get_width() + bar_w + 8,
-                                *(s.get_width() for s in desc_surfs))
+                                *(s.get_width() for s in desc_surfs), stats_block_w)
                 box_w = content_w + pad * 2
-                # compute height: title + gap + (bar_h + text) for hp + gap + (bar_h + text) for mana + gap + spell name + gap + desc lines
+                # compute height: title + gap + (bar_h + text) for hp + gap + (bar_h + text) for mana + gap + stats block + gap + spell name + gap + desc lines
                 spacing = 6
                 box_h = (pad + title_surf.get_height() + spacing + max(bar_h, hp_surf.get_height()) + spacing +
-                         max(bar_h, mana_surf.get_height()) + spacing + spell_surf.get_height() + spacing + sum(s.get_height() + 4 for s in desc_surfs) + pad)
+                         max(bar_h, mana_surf.get_height()) + spacing + stats_block_h + spacing + spell_surf.get_height() + spacing + sum(s.get_height() + 4 for s in desc_surfs) + pad)
                 bx = mx + 16
                 by = my + 16
                 # clamp to window bounds
@@ -743,12 +798,12 @@ class PygameBoardVisualizer:
                 hp_ratio = max(0.0, min(1.0, hovered_unit.current_health / float(max(1, hovered_unit.get_max_health()))))
                 pygame.draw.rect(tooltip_surf, (50, 200, 100), (bar_x, bar_y, int(bar_w * hp_ratio), bar_h))
                 # numeric on the right of bar
-                tooltip_surf.blit(hp_surf, (bar_x + bar_w + 8, yoff))
+                tooltip_surf.blit(hp_surf, (bar_x + bar_w + 8, yoff - hp_surf.get_height()//2))
                 yoff += max(bar_h, hp_surf.get_height()) + spacing
 
                 # Mana bar + numeric
                 bar_x = pad
-                bar_y = yoff + max(0, (max(0, bar_h - mana_surf.get_height()) // 2))
+                bar_y = yoff + max(0, (max(0, bar_h - mana_surf.get_height()) // 3))
                 pygame.draw.rect(tooltip_surf, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
                 mana_ratio = 0.0
                 if max_mana > 0:
@@ -757,8 +812,52 @@ class PygameBoardVisualizer:
                     except Exception:
                         mana_ratio = 0.0
                 pygame.draw.rect(tooltip_surf, (80, 140, 220), (bar_x, bar_y, int(bar_w * mana_ratio), bar_h))
-                tooltip_surf.blit(mana_surf, (bar_x + bar_w + 8, yoff))
+                tooltip_surf.blit(mana_surf, (bar_x + bar_w + 8, yoff - mana_surf.get_height()//3))
                 yoff += max(bar_h, mana_surf.get_height()) + spacing
+
+
+                # Render surfaces for each stat column
+                stat_font = self.tooltip_font
+                left_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in left_stats]
+                midleft_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midleft_stats]
+                midright_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midright_stats]
+                right_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in right_stats]
+
+                # Compute widths
+                left_w = max((s.get_width() for s in left_surfs), default=0)
+                midleft_w = max((s.get_width() for s in midleft_surfs), default=0)
+                midright_w = max((s.get_width() for s in midright_surfs), default=0)
+                right_w = max((s.get_width() for s in right_surfs), default=0)
+                gap_cols = 12
+                stats_block_w = left_w + (midleft_w and gap_cols + midleft_w or 0) + (midright_w and gap_cols + midright_w or 0) + (right_w and gap_cols + right_w or 0)
+
+                # Ensure tooltip width accommodates stats block
+                content_w = max(content_w, stats_block_w + pad * 2)
+                box_w = content_w + pad * 2
+
+                # Draw stat lines (three columns)
+                col_x = pad
+                # left column
+                for i, s in enumerate(left_surfs):
+                    tooltip_surf.blit(s, (col_x, yoff + i * (s.get_height() + 2)))
+                # middle columns
+                if midleft_surfs:
+                    midleft_x = pad + left_w + gap_cols
+                    for i, s in enumerate(midleft_surfs):
+                        tooltip_surf.blit(s, (midleft_x, yoff + i * (s.get_height() + 2)))
+                if midright_surfs:
+                    midright_x = pad + left_w + gap_cols + midleft_w + gap_cols
+                    for i, s in enumerate(midright_surfs):
+                        tooltip_surf.blit(s, (midright_x, yoff + i * (s.get_height() + 2)))
+                # right column
+                if right_surfs:
+                    right_x = pad + left_w + gap_cols + midleft_w + gap_cols + midright_w + gap_cols
+                    for i, s in enumerate(right_surfs):
+                        tooltip_surf.blit(s, (right_x, yoff + i * (s.get_height() + 2)))
+
+                # advance yoff by the stats block height
+                yoff += stats_block_h + spacing
+
 
                 # Spell name (below bars)
                 try:

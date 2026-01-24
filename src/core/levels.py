@@ -9,7 +9,7 @@ LEVEL1 = {
         (3, 3): UnitType.TANK,
         (2, 1): UnitType.ARCHER,
     },
-    'budget_inc': 30,
+    'budget_inc': 3,
 }
 
 LEVEL2 = {

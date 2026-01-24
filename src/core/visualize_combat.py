@@ -117,11 +117,8 @@ def main():
                     spawn_types = [UnitType.WARRIOR, UnitType.ARCHER, UnitType.MAGE, UnitType.TANK, UnitType.ASSASSIN]
                     spawn_specs = []
                     for ut in spawn_types:
-                        try:
-                            tmp = Unit(unit_type=ut, rarity=UnitRarity.COMMON, team=2, level=1)
-                            cost = tmp.get_cost()
-                        except Exception:
-                            cost = 1
+                        tmp = Unit(unit_type=ut, rarity=UnitRarity.COMMON, team=2, level=1)
+                        cost = tmp.get_cost()
                         spawn_specs.append((ut, cost))
 
                     for i, (ut, cost) in enumerate(spawn_specs):
@@ -175,6 +172,11 @@ def main():
                                         dragging = True
                                         drag_from = cell_pos
                                         drag_mouse_pos = event.pos
+                                        # highlight player's placement zone while dragging
+                                        try:
+                                            visual.highlight_player_initial_zone = True
+                                        except Exception:
+                                            pass
                                         continue
                     except Exception:
                         pass
@@ -229,6 +231,29 @@ def main():
                                         if tcell.is_empty():
                                             board.place_unit(dragged_unit, target)
                                             placed = True
+                                        else:
+                                            # If occupied by a friendly (team 2) unit, swap positions
+                                            other = tcell.unit
+                                            if getattr(other, 'team', None) == 2:
+                                                try:
+                                                    # remove the occupying unit, place dragged unit, then place the other at original slot
+                                                    other_unit = board.remove_unit(target)
+                                                    board.place_unit(dragged_unit, target)
+                                                    # place other unit back to where dragged unit came from
+                                                    board.place_unit(other_unit, drag_from)
+                                                    placed = True
+                                                    # keep unit lists consistent and update engine teams
+                                                    try:
+                                                        all_units.sort(key=lambda u: (u.position[0]*board.size[1] + u.position[1]))
+                                                    except Exception:
+                                                        pass
+                                                    try:
+                                                        engine.set_teams(team1_units, team2_units)
+                                                    except Exception:
+                                                        pass
+                                                except Exception:
+                                                    # fallback: return dragged unit to origin later
+                                                    placed = False
                                 if not placed:
                                     # return to original position
                                     board.place_unit(dragged_unit, drag_from)
@@ -237,6 +262,11 @@ def main():
                                 board.place_unit(dragged_unit, drag_from)
                             except Exception:
                                 pass
+                        # stop highlighting now that drag finished
+                        try:
+                            visual.highlight_player_initial_zone = False
+                        except Exception:
+                            pass
                         dragging = False
                         dragged_unit = None
                         drag_from = None

@@ -36,7 +36,7 @@ class FireballSpell(AbstractSpell):
     def __init__(self):
         super().__init__("Fireball")
         self.ranged = True
-        self.damage = 100
+        self.damage = 250
         self.range = 5
         self.spell_delay: int = 2  # Delay before the spell is executed, in frames
         
@@ -64,12 +64,35 @@ class FireballSpell(AbstractSpell):
                     and adjacent.unit.is_alive() and adjacent.unit != self.target and adjacent.unit.team == self.target.team:
                     damage_obj = Damage(value=damage/2, crit=(can_crit and crit_roll < crit_rate), dmg_type=DamageType.MAGICAL, frame_number=frame_number)
                     adjacent.unit.take_damage(damage_obj, source=source, spell_name=self.name)
-            # print(f"Casted {self.name} on {target.unit_type.value} for {mitigated_damage} damage.")
         else:
             print(f"Target {self.target.unit_type.value} is already defeated.")
 
     def description(self):
-        return f"Deals {self.damage * self.spell_power} magical damage to a target and {self.damage/2 * self.spell_power} damage to adjacent allies."
+        return f"Deals {self.damage * self.spell_power} magical damage to a target and {self.damage/2 * self.spell_power} damage to adjacent enemies."
+
+class SpinSlashSpell(AbstractSpell):
+    def __init__(self):
+        super().__init__("Spin Slash")
+        self.spell_delay: int = 2
+        self.ranged = False
+        self.damage = 100  # Base damage
+
+    def prepare(self, source, board):
+        self.target = source  # Target is self for area effect around the caster
+        return True
+
+    def execute(self, source, board, frame_number: int, crit_rate: float = 0.0, crit_dmg: float = 0.0, can_crit: bool = False, crit_roll: float = 0.0):
+        """Execute the spin slash spell."""
+        for cell in board.get_adjacent_cells(source.position):
+            if not cell.is_empty() and not cell.is_planned() and cell.unit.team != source.team and cell.unit.is_alive():
+                damage = self.damage * source.base_stats.spell_power
+                if can_crit and crit_roll < crit_rate:
+                    damage *= crit_dmg
+                damage_obj = Damage(value=damage, crit=(can_crit and crit_roll < crit_rate), dmg_type=DamageType.PHYSICAL, frame_number=frame_number)
+                cell.unit.take_damage(damage_obj, source=source, spell_name=self.name)
+
+    def description(self):
+        return f"Deals {self.damage * self.spell_power} physical damage to all adjacent enemy units."
 
 class SelfHealSpell(AbstractSpell):
     def __init__(self):

@@ -10,7 +10,7 @@ import random
 # from numba.experimental import jitclass
 # from numba import float32
 from damage import Damage
-from spells import AbstractSpell, FireballSpell, AttackSpeedBuffSpell, SelfHealSpell, AssassinBlinkSpell
+from spells import AbstractSpell, FireballSpell, AttackSpeedBuffSpell, SelfHealSpell, AssassinBlinkSpell, SpinSlashSpell
 from constant_types import CombatAction, CombatEventType, UnitType, UnitRarity, DamageType
 from itertools import count
 import global_log
@@ -93,9 +93,9 @@ class Unit:
     def _get_default_stats(self) -> UnitStats:
         """Get default stats based on unit type."""
         stat_templates = {
-            UnitType.WARRIOR: UnitStats(health=1200, attack=65, spell_power=1, defense=40, resistance=40, range=1, spell=FireballSpell(), attack_speed= 1.0),
+            UnitType.WARRIOR: UnitStats(health=1200, attack=65, spell_power=1, defense=40, resistance=40, range=1, spell=SpinSlashSpell(), attack_speed= 1.0),
             UnitType.ARCHER: UnitStats(health=700, attack=60, spell_power=1, defense=20, resistance=20, range=4, max_mana=70, spell=AttackSpeedBuffSpell(), attack_speed= 1.0),
-            UnitType.MAGE: UnitStats(health=600, attack=40, spell_power=2.5, defense=20, resistance=20, range=4, max_mana=50, spell=FireballSpell()),
+            UnitType.MAGE: UnitStats(health=600, attack=40, spell_power=1, defense=20, resistance=20, range=4, max_mana=50, spell=FireballSpell()),
             UnitType.TANK: UnitStats(health=1500, attack=50, spell_power=1, defense=60, resistance=60, range=1, spell= SelfHealSpell(), attack_speed= 0.8),
             UnitType.ASSASSIN: UnitStats(health=800, attack=60, spell_power=1, defense=25, resistance=30, range=1, max_mana=50, spell=AssassinBlinkSpell(), crit_rate=0.5, attack_speed= 1.2),
             UnitType.SUPPORT: UnitStats(health=900, attack=25, spell_power=1, defense=20, resistance=20, range=4, max_mana=80),

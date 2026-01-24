@@ -729,13 +729,14 @@ class PygameBoardVisualizer:
                 bs = hovered_unit.base_stats
                 stats = [
                     ("ATK", str(int(hovered_unit.get_attack()))),
+                    ("AS", f"{hovered_unit.get_attack_speed():.2f}"),
                     ("SP", f"{getattr(bs, 'spell_power', 0):.0f}"),
+                    ("RNG", str(int(getattr(bs, 'range', 1)))),
                     ("DEF", str(int(hovered_unit.get_defense()))),
                     ("RES", str(int(hovered_unit.get_resistance()))),
-                    ("RNG", str(int(getattr(bs, 'range', 1)))),
                     ("CR", f"{getattr(bs, 'crit_rate', 0.0)*100:.0f}%"),
                     ("CD", f"{getattr(bs, 'crit_dmg', 1.0):.1f}x"),
-                    ("AS", f"{hovered_unit.get_attack_speed():.2f}"),
+
                 ]
                 stat_font = self.tooltip_font
                 # Split into four roughly-equal columns

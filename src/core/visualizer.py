@@ -115,6 +115,8 @@ class PygameBoardVisualizer:
         self.unit_info = {}
         # When true, render player's initial placement cells with a highlighted border
         self.highlight_player_initial_zone = False
+        # Deferred tooltip surfaces to draw after UI so they appear on top
+        self._deferred_tooltips: list[tuple] = []
 
     def draw_board(self, engine: CombatEngine = None, sim_frame: int = 0, sim_progress: float = 0.0):
         """Draw board and optionally animate pending move actions from engine.
@@ -884,6 +886,17 @@ class PygameBoardVisualizer:
     def close(self):
         pygame.quit()
 
+    def flush_tooltips(self):
+        """Draw any deferred tooltip surfaces (ensures they render above other UI)."""
+        try:
+            for surf, x, y in list(self._deferred_tooltips):
+                try:
+                    self.screen.blit(surf, (x, y))
+                except Exception:
+                    pass
+        finally:
+            self._deferred_tooltips.clear()
+
     def get_pause_button_rect(self):
         """Return a pygame.Rect for the pause/start button placed below the board's bottom-right."""
         # approximate board pixel size (matches estimation in __init__)
@@ -1062,7 +1075,12 @@ class PygameBoardVisualizer:
                     tsurf.blit(s, (pad, yoff))
                     yoff += s.get_height() + 4
 
-                self.screen.blit(tsurf, (bx, by))
+                # Defer blitting the spawn tooltip so it can be drawn above other UI
+                try:
+                    self._deferred_tooltips.append((tsurf, bx, by))
+                except Exception:
+                    # fallback to immediate blit
+                    self.screen.blit(tsurf, (bx, by))
 
 
     def get_cell_center(self, position: Tuple[int, int]) -> Tuple[int, int]:

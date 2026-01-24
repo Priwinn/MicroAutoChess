@@ -429,6 +429,11 @@ def main():
                 pass
 
             visual.draw_pause_button(paused)
+            # Draw any deferred tooltips (spawn button tooltips should appear above pause/start)
+            try:
+                visual.flush_tooltips()
+            except Exception:
+                pass
             visual.present()
 
             

@@ -14,7 +14,7 @@ from queue import PriorityQueue
 # from src.numba_classes.numba_pq import PurePythonPriorityQueue as PriorityQueue
 # from src.numba_classes.numba_pq import PriorityQueue as PriorityQueue
 from units import Unit, UnitType
-from math_utils import less_than_or_equal
+from math_utils import float_less_than_or_equal
 
 
 
@@ -230,7 +230,7 @@ class Board:
         
         for x in range(min_x, max_x + 1):
             for y in range(min_y, max_y + 1):
-                if less_than_or_equal(self.l2_distance(position, (x, y)), l2_range):
+                if float_less_than_or_equal(self.l2_distance(position, (x, y)), l2_range):
                     positions_in_range.append((x, y))
         
         return positions_in_range
@@ -542,7 +542,7 @@ class HexBoard(Board):
             for r in range(max(-max_range, -q - max_range), min(max_range, -q + max_range) + 1):
                 x,y = axial_to_oddr((q0 + q, r0 + r))
                 if self.is_valid_position((x, y)):
-                    if less_than_or_equal(self.l2_distance(position, (x, y)), l2_range):
+                    if float_less_than_or_equal(self.l2_distance(position, (x, y)), l2_range):
                         results.append((x, y))
         return results
 

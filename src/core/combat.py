@@ -18,7 +18,7 @@ from board import Board
 from units import Unit, UnitType
 from combat_event import CombatEvent
 import global_log
-from math_utils import less_than_or_equal
+from math_utils import float_less_than_or_equal
 # from src.core.player import Player
 # from src.core.spells import AbstractSpell, FireballSpell, SelfHealSpell
 
@@ -321,7 +321,7 @@ class CombatEngine:
         distance = self.board.l2_distance(unit.position, target.position)
 
         # If the unit has a ranged spell and enough mana, it can cast it if the target is within spell range
-        if unit.current_mana >= unit.base_stats.max_mana and unit.base_stats.spell.ranged and less_than_or_equal(distance, unit.base_stats.spell.range):
+        if unit.current_mana >= unit.base_stats.max_mana and unit.base_stats.spell.ranged and float_less_than_or_equal(distance, unit.base_stats.spell.range):
             # If the unit has enough mana and a ranged spell, it can cast it
             # Plan spell cast
             valid_prepare = unit.base_stats.spell.prepare(unit, self.board)
@@ -528,7 +528,7 @@ class CombatEngine:
                     if self.rng.random() < 1/best_count:
                         closest_enemy = enemy
                     best_count += 1
-                elif less_than_or_equal(l2_distance_new, l2_distance_current):
+                elif float_less_than_or_equal(l2_distance_new, l2_distance_current):
                     closest_enemy = enemy
 
 

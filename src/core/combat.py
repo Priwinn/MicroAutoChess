@@ -11,16 +11,13 @@ from dataclasses import dataclass
 from enum import Enum
 import random
 import math
-# from numba import jit
-# from numba.experimental import jitclass
 
 from board import Board
 from units import Unit, UnitType
 from combat_event import CombatEvent
 import global_log
 from math_utils import float_less_than_or_equal
-# from src.core.player import Player
-# from src.core.spells import AbstractSpell, FireballSpell, SelfHealSpell
+
 
 @dataclass
 class PlannedAction:
@@ -84,9 +81,6 @@ class CombatEngine:
         Set the teams for combat.
         Each team is a list of Unit objects.
         """
-        # if not team1 or not team2:
-        #     raise ValueError("Both teams must have at least one unit.")
-        
         # Assign teams to units
         for unit in team1:
             unit.team = 1

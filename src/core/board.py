@@ -7,12 +7,6 @@ from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass
 from enum import Enum
 from queue import PriorityQueue
-# from src.numba_classes.numba_pq import NumbaPriorityQueue as PriorityQueue
-# from src.numba_classes.numba_pq import PriorityQueue as PriorityQueue
-# from numba import njit
-
-# from src.numba_classes.numba_pq import PurePythonPriorityQueue as PriorityQueue
-# from src.numba_classes.numba_pq import PriorityQueue as PriorityQueue
 from units import Unit, UnitType
 from math_utils import float_less_than_or_equal
 
@@ -30,7 +24,7 @@ class BoardCell:
     """Represents a single cell on the game board."""
     position: Tuple[int, int]
     # DO NOT USE THIS TO CHECK IF CELL IS OCCUPIED
-    # WHEN CHECK FOR AOE DAMAGE, CHECK IF A UNIT IS BEING HUT TWICE
+    # WHEN CHECK FOR AOE DAMAGE, CHECK IF A UNIT IS BEING HURT TWICE
     unit: Optional[Unit] = None     
     cell_type: CellType = CellType.EMPTY
     

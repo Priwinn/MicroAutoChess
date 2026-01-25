@@ -15,7 +15,8 @@ class AbstractSpell:
         self.spell_power: float = 1.0  # Multiplier for spell effects based on caster's stats
         self.target: Optional['Unit'] = None
         self.target_position: Optional[tuple] = None
-        
+        self.projectile_animation: bool = False
+        self.on_hit_animation: bool = False
     
     def prepare(self, source, board):
         """Prepare the spell for execution. Can be used to find the target of the spell."""
@@ -35,6 +36,14 @@ class AbstractSpell:
         """Reset any spell-specific state if needed."""
         self.target = None
         self.target_position = None
+
+    def projectile_render_callback(self, source, board):
+        """Callback for rendering projectile animation if applicable."""
+        return None
+
+    def on_hit_render_callback(self, source, board):
+        """Callback for rendering on-hit animation if applicable."""
+        return None
 
 
 class FireballSpell(AbstractSpell):
@@ -74,6 +83,23 @@ class FireballSpell(AbstractSpell):
 
     def description(self):
         return f"Deals {self.damage * self.spell_power} magical damage to a target and {self.damage/2 * self.spell_power} damage to adjacent enemies."
+    def projectile_render_callback(self, source, board):
+        # Return a lightweight descriptor for visualizer to render a projectile
+        return {
+            'type': 'projectile',
+            'id': 'Fireball',
+            'color_hint': (200, 40, 40),
+            'glow': True,
+        }
+
+    def on_hit_render_callback(self, source, board):
+        # AoE on hit descriptor (hex radius 1)
+        return {
+            'type': 'aoe',
+            'radius_hex': 1,
+            'duration': 0.6,
+            'color_hint': None,  # visualizer will prefer team color when provided
+        }
 
 class SpinSlashSpell(AbstractSpell):
     def __init__(self):
@@ -98,6 +124,23 @@ class SpinSlashSpell(AbstractSpell):
 
     def description(self):
         return f"Deals {self.damage * self.spell_power} physical damage to all adjacent enemy units."
+    def projectile_render_callback(self, source, board):
+        # Spin slash doesn't have a projectile, but provide a short-range projectile-like visual
+        return {
+            'type': 'projectile',
+            'id': 'SpinSlash',
+            'color_hint': (220, 120, 40),
+            'glow': False,
+        }
+
+    def on_hit_render_callback(self, source, board):
+        # Spin slash also produces an AoE effect around caster
+        return {
+            'type': 'aoe',
+            'radius_hex': 1,
+            'duration': 0.45,
+            'color_hint': None,
+        }
 
 class SelfHealSpell(AbstractSpell):
     def __init__(self):
@@ -203,3 +246,32 @@ class AttackSpeedBuffSpell(AbstractSpell):
 
     def description(self):
         return f"Increases the caster's attack speed by {self.buff_amount * 100}%. Stacks with multiple casts."
+    def on_hit_render_callback(self, source, board):
+        # Return particle burst descriptor used by visualizer to spawn particles
+        return {
+            'type': 'particles',
+            'num': 40,
+            'base_color_hint': None,  # visualizer will map team -> color
+            'lifetime_range': (0.7, 1.6),
+            'size_range': (4, 7),
+            'speed_mult_range': (0.8, 2.2),
+        }
+
+
+# Simple factory to get spell instances by name for visualizer/event handling
+_SPELL_CLASS_MAP = {
+    'Fireball': FireballSpell,
+    'Spin Slash': SpinSlashSpell,
+    'Heal': SelfHealSpell,
+    'Assassin Blink': AssassinBlinkSpell,
+    'Attack Speed Buff': AttackSpeedBuffSpell,
+}
+
+def get_spell_instance_by_name(name: str) -> Optional[AbstractSpell]:
+    cls = _SPELL_CLASS_MAP.get(name)
+    if cls is None:
+        return None
+    try:
+        return cls()
+    except Exception:
+        return None

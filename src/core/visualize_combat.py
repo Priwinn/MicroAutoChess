@@ -19,7 +19,7 @@ from combat_test import setup_combat_scenario
 from units import Unit
 from constant_types import UnitType, UnitRarity
 from pve_round_manager import PvERoundManager
-from utils import TEAM1_POSITION_MAP1, TEAM1_POSITION_MAP2, setup_board_from_dict, setup_board_from_config
+from utils import setup_board_from_dict, setup_board_from_config
 from levels import LEVELS
 
 

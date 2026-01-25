@@ -134,11 +134,12 @@ LEVEL9 = {
 LEVELTANKS = {
     'board_size': (7, 8),
     'units': {(i,j): UnitType.TANK for i in range(7) for j in range(4)},
-    'budget_inc': 10
+    'budget_inc': 9
 }
 
 
 LEVELS = [
+    # LEVELTANKS,
     LEVEL1, 
     LEVEL2, 
     LEVEL3, 
@@ -147,5 +148,5 @@ LEVELS = [
     LEVEL6,
     LEVEL7,
     LEVEL8,
-    LEVEL9
+    LEVEL9,
 ]

@@ -6,6 +6,7 @@ from collections import defaultdict
 from combat import CombatEngine
 from constant_types import CombatAction, CombatEventType
 from units import Unit, UnitRarity
+import spells
 import pygame.display
 
 
@@ -23,7 +24,7 @@ def hex_to_pixel(q: int, r: int, size: float) -> Tuple[float, float]:
     return x, y
 
 
-def polygon_corners(center_x: float, center_y: float, size: float):
+def hexagon_corners(center_x: float, center_y: float, size: float):
     """Return 6 points for a pointy-top hex centered at given pixel coords."""
     points = []
     for i in range(6):
@@ -57,10 +58,7 @@ class PygameBoardVisualizer:
         est_h = int(orig_cell * 1.5 * (self.board.height + 1)) + margin * 2 + est_bottom
 
         # Compute scale factor to fit the board into the desired window
-        try:
-            scale = min(float(desired_w) / max(1, est_w), float(desired_h) / max(1, est_h))
-        except Exception:
-            scale = 1.0
+        scale = min(float(desired_w) / max(1, est_w), float(desired_h) / max(1, est_h))
 
         # Limit scaling for sanity
         scale = max(0.5, min(scale, 4.0))
@@ -128,12 +126,21 @@ class PygameBoardVisualizer:
         self.screen.fill(self.bg_color)
 
         moving_map = {}
+        attack_anims = []
+        spell_projectiles = []
         if engine is not None:
             pending = engine.get_pending_actions()
             for action in pending:
-                if action.action_type == CombatAction.MOVE and action.start_position and action.target_position:
-                    # Only animate if resolution is in the future
-                    if action.resolution_frame > sim_frame:
+                if action.action_type == CombatAction.MOVE:
+                    self._collect_move_animation(action, sim_frame, sim_progress, moving_map)
+                elif action.action_type == CombatAction.ATTACK:
+                    self._collect_attack_animation(action, sim_frame, sim_progress, attack_anims)
+                elif action.action_type == CombatAction.CAST_SPELL:
+                    # Allow spell instance to describe its projectile animation
+                    desc = action.spell_instance.projectile_render_callback(action.unit, self.board)
+                    # reuse existing helper to compute positions, then append descriptor
+                    if action.start_position is not None and action.resolution_frame > sim_frame:
+                        # compute interpolated positions like before
                         start_f = action.planned_frame
                         end_f = action.resolution_frame
                         denom = max(1, end_f - start_f)
@@ -141,133 +148,83 @@ class PygameBoardVisualizer:
                         t = max(0.0, min(1.0, t))
 
                         q1, r1 = oddr_to_axial(action.start_position)
-                        q2, r2 = oddr_to_axial(action.target_position)
                         x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
-                        x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
-                        # offsets (apply left offset + margin)
                         cx1 = x1 + self.left_offset + self.margin
                         cy1 = y1 + self.margin + self.cell_radius + 4
-                        cx2 = x2 + self.left_offset + self.margin
-                        cy2 = y2 + self.margin + self.cell_radius + 4
 
-                        ix = int(cx1 + (cx2 - cx1) * t)
-                        iy = int(cy1 + (cy2 - cy1) * t)
-                        moving_map[action.unit.id] = (action.unit, ix, iy, action)
+                        target_pos = None
+                        if action.target is not None and action.target.position is not None:
+                            target_pos = action.target.position
+                        elif getattr(action, 'target_position', None):
+                            target_pos = action.target_position
 
-            # Collect attack animations (lines from source toward target)
-            attack_anims = []
-            for action in pending:
-                if action.action_type == CombatAction.ATTACK and action.start_position and action.target and getattr(action.target, 'position', None):
-                    if action.resolution_frame > sim_frame:
-                        start_f = action.planned_frame
-                        end_f = action.resolution_frame
-                        denom = max(1, end_f - start_f)
-                        t = (sim_frame + sim_progress - start_f) / denom
-                        t = max(0.0, min(1.0, t))
+                        if target_pos is not None:
+                            q2, r2 = oddr_to_axial(target_pos)
+                            x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
+                            cx2 = x2 + self.left_offset + self.margin
+                            cy2 = y2 + self.margin + self.cell_radius + 4
 
-                        q1, r1 = oddr_to_axial(action.start_position)
-                        q2, r2 = oddr_to_axial(action.target.position)
-                        x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
-                        x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
-                        cx1 = x1 + self.left_offset + self.margin
-                        cy1 = y1 + self.margin + self.cell_radius + 4
-                        cx2 = x2 + self.left_offset + self.margin
-                        cy2 = y2 + self.margin + self.cell_radius + 4
-
-                        cur_x = cx1 + (cx2 - cx1) * t
-                        cur_y = cy1 + (cy2 - cy1) * t
-                        attack_anims.append((action, cx1, cy1, cur_x, cur_y, t))
-
-            # Collect spell projectile animations (e.g., Fireball) for pending spell casts
-            spell_projectiles = []
-            for action in pending:
-                if action.action_type == CombatAction.CAST_SPELL and getattr(action, 'spell_instance', None) is not None:
-                    spell_name = getattr(action.spell_instance, 'name', None)
-                    # only animate Fireball projectiles here
-                    if (spell_name == 'Fireball' or spell_name == 'Spin Slash') and action.start_position is not None:
-                        # resolve only if in the future
-                        if action.resolution_frame > sim_frame:
-                            start_f = action.planned_frame
-                            end_f = action.resolution_frame
-                            denom = max(1, end_f - start_f)
-                            t = (sim_frame + sim_progress - start_f) / denom
-                            t = max(0.0, min(1.0, t))
-
-                            # source pixel
-                            q1, r1 = oddr_to_axial(action.start_position)
-                            x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
-                            cx1 = x1 + self.left_offset + self.margin
-                            cy1 = y1 + self.margin + self.cell_radius + 4
-
-                            # target: prefer explicit target unit position, fallback to target_position
-                            target_pos = None
-                            if getattr(action, 'target', None) and getattr(action.target, 'position', None):
-                                target_pos = action.target.position
-                            elif getattr(action, 'target_position', None):
-                                target_pos = action.target_position
-
-                            if target_pos is not None:
-                                q2, r2 = oddr_to_axial(target_pos)
-                                x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
-                                cx2 = x2 + self.left_offset + self.margin
-                                cy2 = y2 + self.margin + self.cell_radius + 4
-
-                                cur_x = cx1 + (cx2 - cx1) * t
-                                cur_y = cy1 + (cy2 - cy1) * t
-                                spell_projectiles.append((action, cx1, cy1, cx2, cy2, cur_x, cur_y, t))
+                            cur_x = cx1 + (cx2 - cx1) * t
+                            cur_y = cy1 + (cy2 - cy1) * t
+                            spell_projectiles.append((action, cx1, cy1, cx2, cy2, cur_x, cur_y, t, desc))
 
             # Collect damage events from engine combat log and create floating texts
             now = pygame.time.get_ticks() / 1000.0
             for ev in engine.combat_log:
                 # Spell planning -> start spin animation
                 if getattr(ev, 'event_type', None) == CombatEventType.ACTION_PLANNED and getattr(ev, 'spell_name', None) and id(ev) not in self._seen_events:
-                    source = getattr(ev, 'source', None)
-                    if source is not None and getattr(source, 'id', None) is not None:
+                    source = ev.source
+                    if source is not None and source.id is not None:
                         spin_duration = 0.6
                         spin_speed = 360.0/spin_duration  # degrees per second
                         self.spin_animations.append([source.id, now, spin_duration, spin_speed])
                         self._seen_events.add(id(ev))
-                # Spell execution: Fireball AoE
-                if ev.event_type == CombatEventType.SPELL_EXECUTED and (ev.spell_name == 'Fireball' or ev.spell_name == 'Spin Slash') and id(ev) not in self._seen_events:
-                    pos = getattr(ev, 'position', None)
-                    if pos is None and getattr(ev, 'target', None) and getattr(ev.target, 'position', None):
-                        pos = ev.target.position
-                    if pos is not None:
-                        # store AoE as board position + hex radius (1 => adjacent cells)
-                        radius_hex = 1
-                        duration = 0.6
-                        # choose color from source team if available, otherwise default red
-                        team = ev.source.team
-                        color = self.team_colors.get(team, (200, 40, 40))
-                        self.aoe_animations.append([pos, radius_hex, now, duration, color])
-                        self._seen_events.add(id(ev))
-
-                # Particle effect for Attack Speed Buff
-                if ev.event_type == CombatEventType.SPELL_EXECUTED and ev.spell_name == 'Attack Speed Buff' and id(ev) not in self._seen_events:
-                    src = getattr(ev, 'source', None)
-                    if src is not None and getattr(src, 'position', None):
-                        q, r = oddr_to_axial(src.position)
-                        px, py = hex_to_pixel(q, r, self.cell_radius)
-                        cx = int(px + self.left_offset + self.margin)
-                        cy = int(py + self.margin + self.cell_radius + 4)
-                        # emit particles around source
-                        team = getattr(src, 'team', None)
-                        base_color = self.team_colors.get(team, (200, 200, 50))
-                        # Bigger burst: more particles, larger sizes, longer life and a soft glow
-                        num_particles = 40
-                        for i in range(num_particles):
-                            ang = (2 * math.pi * i / num_particles) + random.uniform(-0.4, 0.4)
-                            speed = random.uniform(self.cell_radius * 0.8, self.cell_radius * 2.2)
-                            vx = math.cos(ang) * speed
-                            vy = math.sin(ang) * speed
-                            lifetime = random.uniform(0.7, 1.6)
-                            size = random.randint(4, 7)
-                            # slightly vary color brightness
-                            color = (min(255, int(base_color[0] * random.uniform(0.9, 1.4))),
-                                     min(255, int(base_color[1] * random.uniform(0.9, 1.4))),
-                                     min(255, int(base_color[2] * random.uniform(0.9, 1.4))))
-                            self.particles.append([cx, cy, vx, vy, now, lifetime, color, size])
-                        self._seen_events.add(id(ev))
+                # Spell execution: AoE spells
+                if ev.event_type == CombatEventType.SPELL_EXECUTED and id(ev) not in self._seen_events:
+                    # Try to obtain a spell instance from the event or by name 
+                    # TODO:currently we dont pass instance. It might be useful to animate changing spells later
+                    spell_inst = getattr(ev, 'spell_instance', None)
+                    if spell_inst is None and getattr(ev, 'spell_name', None):
+                        spell_inst = spells.get_spell_instance_by_name(ev.spell_name)
+                    if spell_inst is not None:
+                        # let spell instance describe its on-hit animation
+                        desc = spell_inst.on_hit_render_callback(ev.source, self.board)
+                        pos = ev.position
+                        if pos is None and ev.target is not None and ev.target.position is not None:
+                            pos = ev.target.position
+                        # interpret descriptor(s)
+                        if desc is not None and pos is not None:
+                            if desc.get('type') == 'aoe':
+                                radius_hex = desc.get('radius_hex', 1)
+                                duration = desc.get('duration', 0.6)
+                                team = ev.source and ev.source.team
+                                color = self.team_colors.get(team, desc.get('color_hint', (200, 40, 40)))
+                                self.aoe_animations.append([pos, radius_hex, now, duration, color])
+                                self._seen_events.add(id(ev))
+                            elif desc.get('type') == 'particles':
+                                src = ev.source
+                                if src is not None and src.position is not None:
+                                    q, r = oddr_to_axial(src.position)
+                                    px, py = hex_to_pixel(q, r, self.cell_radius)
+                                    cx = int(px + self.left_offset + self.margin)
+                                    cy = int(py + self.margin + self.cell_radius + 4)
+                                    base_color = desc.get('base_color_hint') or self.team_colors.get(src.team, (200, 200, 50))
+                                    num_particles = desc.get('num', 20)
+                                    lifetime_range = desc.get('lifetime_range', (0.5, 1.2))
+                                    size_range = desc.get('size_range', (3, 6))
+                                    speed_mult_range = desc.get('speed_mult_range', (0.6, 1.6))
+                                    for i in range(num_particles):
+                                        ang = (2 * math.pi * i / num_particles) + random.uniform(-0.4, 0.4)
+                                        speed = random.uniform(self.cell_radius * speed_mult_range[0], self.cell_radius * speed_mult_range[1])
+                                        vx = math.cos(ang) * speed
+                                        vy = math.sin(ang) * speed
+                                        lifetime = random.uniform(lifetime_range[0], lifetime_range[1])
+                                        size = random.randint(size_range[0], size_range[1])
+                                        color = (min(255, int(base_color[0] * random.uniform(0.9, 1.4))),
+                                                 min(255, int(base_color[1] * random.uniform(0.9, 1.4))),
+                                                 min(255, int(base_color[2] * random.uniform(0.9, 1.4))))
+                                        self.particles.append([cx, cy, vx, vy, now, lifetime, color, size])
+                                    self._seen_events.add(id(ev))
 
                 if getattr(ev, 'damage', 0) and ev.damage > 0 and id(ev) not in self._seen_events:
                     # Determine position to display damage: prefer explicit position, then target position
@@ -278,18 +235,12 @@ class PygameBoardVisualizer:
                         pos = ev.target.position
 
                     # accumulate damage done by source (for damage meter)
-                    src = getattr(ev, 'source', None)
+                    src = ev.source
                     if src is not None and getattr(src, 'id', None) is not None:
-                            try:
-                                self.damage_done[src.id] += float(ev.damage)
-                                # remember unit symbol/team for charts even if unit later dies
-                                try:
-                                    self.unit_info[src.id] = {'symbol': src._get_unit_symbol(), 'team': getattr(src, 'team', None)}
-                                except Exception:
-                                    # best-effort: ignore if unit lacks helpers
-                                    pass
-                            except Exception:
-                                pass
+                        self.damage_done[src.id] += float(ev.damage)
+                        # remember unit symbol/team for charts even if unit later dies
+                        self.unit_info[src.id] = {'symbol': src._get_unit_symbol(), 'team': src.team}
+
 
                     if pos is not None:
                         q, r = oddr_to_axial(pos)
@@ -322,24 +273,12 @@ class PygameBoardVisualizer:
                         self.floating_texts.append([x0, y0, txt, now, duration, vx, vy, txt_color])
                         self._seen_events.add(id(ev))
 
-            # If any pending action for a unit was cancelled (converted to WAIT and start_position cleared),
-            # ensure we don't animate that unit.
-            # cancelled_ids = set()
-            # for p in engine.get_pending_actions():
-            #     if p.action_type == CombatAction.WAIT:
-            #         cancelled_ids.add(p.unit.id)
-            # for cid in cancelled_ids:
-            #     if cid in moving_map:
-            #         moving_map.pop(cid, None)
-
         # Draw each cell (but skip drawing units that are currently moving - they'll be drawn interpolated)
         # Precompute highlighted positions when requested (player initial placement zone)
         highlighted_positions = set()
         if getattr(self, 'highlight_player_initial_zone', False):
-            try:
-                highlighted_positions = set(self.board.get_initial_positions(2))
-            except Exception:
-                highlighted_positions = set()
+            highlighted_positions = set(self.board.get_initial_positions(2))
+
 
         for x in range(self.board.width):
             for y in range(self.board.height):
@@ -352,7 +291,7 @@ class PygameBoardVisualizer:
                 center_x = int(px + self.left_offset + self.margin)
                 center_y = int(py + self.margin + self.cell_radius + 4)
 
-                corners = polygon_corners(center_x, center_y, self.cell_radius)
+                corners = hexagon_corners(center_x, center_y, self.cell_radius)
                 # If highlighting is enabled and this cell is in the player's initial zone,
                 # draw a white border to indicate valid placement while dragging.
                 if (x, y) in highlighted_positions:
@@ -459,17 +398,28 @@ class PygameBoardVisualizer:
                 # projectile dot at tip
                 pygame.draw.circle(self.screen, (255, 255, 255), (int(tx), int(ty)), max(2, int(self.cell_radius * 0.08)))
 
-            # Draw spell projectiles (Fireball)
-            for action, sx, sy, tx, ty, cur_x, cur_y, t in spell_projectiles:
+            # Draw spell projectiles
+            for item in spell_projectiles:
+                # item: (action, sx, sy, tx, ty, cur_x, cur_y, t, desc)
+                action, sx, sy, tx, ty, cur_x, cur_y, t, desc = item
+
                 src = action.unit
-                color = self.team_colors.get(getattr(src, 'team', None), (200, 40, 40))
-                # projectile larger than basic attack and with team color
+                color = self.team_colors.get(src.team, (200, 40, 40))
+                # allow descriptor to hint color
+                if desc and isinstance(desc, dict):
+                    ch = desc.get('color_hint')
+                    if ch:
+                        color = ch
+                    glow = desc.get('glow', True)
+                else:
+                    glow = True
+
                 proj_radius = max(6, int(self.cell_radius * 0.18))
-                # optional glow behind projectile
-                glow_surf = pygame.Surface((proj_radius*4, proj_radius*4), pygame.SRCALPHA)
-                glow_alpha = max(40, int(180 * (1.0 - t)))
-                pygame.draw.circle(glow_surf, (color[0], color[1], color[2], glow_alpha), (proj_radius*2, proj_radius*2), proj_radius*2)
-                self.screen.blit(glow_surf, (int(cur_x - proj_radius*2), int(cur_y - proj_radius*2)))
+                if glow:
+                    glow_surf = pygame.Surface((proj_radius*4, proj_radius*4), pygame.SRCALPHA)
+                    glow_alpha = max(40, int(180 * (1.0 - t)))
+                    pygame.draw.circle(glow_surf, (color[0], color[1], color[2], glow_alpha), (proj_radius*2, proj_radius*2), proj_radius*2)
+                    self.screen.blit(glow_surf, (int(cur_x - proj_radius*2), int(cur_y - proj_radius*2)))
                 # core
                 pygame.draw.circle(self.screen, color, (int(cur_x), int(cur_y)), proj_radius)
                 # white highlight
@@ -494,7 +444,7 @@ class PygameBoardVisualizer:
                     px, py = hex_to_pixel(q, r, self.cell_radius)
                     center_x = int(px + self.left_offset + self.margin)
                     center_y = int(py + self.margin + self.cell_radius + 4)
-                    corners = polygon_corners(center_x, center_y, self.cell_radius)
+                    corners = hexagon_corners(center_x, center_y, self.cell_radius)
                     int_corners = [(int(x), int(y)) for x, y in corners]
                     pygame.draw.polygon(surf, (color[0], color[1], color[2], alpha), int_corners)
                 self.screen.blit(surf, (0, 0))
@@ -541,16 +491,11 @@ class PygameBoardVisualizer:
             self.screen.blit(title_surf, (chart_x + 8, chart_y + 6))
 
             # gather units from board and update unit_info for alive units
-            try:
-                board_units = engine.board.get_units()
-            except Exception:
-                board_units = []
+            board_units = engine.board.get_units()
+
 
             for u in board_units:
-                try:
-                    self.unit_info[u.id] = {'symbol': u._get_unit_symbol(), 'team': getattr(u, 'team', None)}
-                except Exception:
-                    pass
+                self.unit_info[u.id] = {'symbol': u._get_unit_symbol(), 'team': getattr(u, 'team', None)}
 
             # bucket units by team using persistent unit_info so dead units remain visible
             units_by_team = {1: [], 2: []}
@@ -640,245 +585,226 @@ class PygameBoardVisualizer:
         self.floating_texts = remaining
 
         # Hover tooltip: show spell description when hovering a unit
-        try:
-            mx, my = pygame.mouse.get_pos()
-            closest = None
-            closest_d = float('inf')
-            hovered_unit = None
-            # find nearest cell center within reasonable radius
-            for x in range(self.board.width):
-                for y in range(self.board.height):
-                    cell = self.board.get_cell((x, y))
-                    q, r = oddr_to_axial((x, y))
-                    px, py = hex_to_pixel(q, r, self.cell_radius)
-                    center_x = int(px + self.left_offset + self.margin)
-                    center_y = int(py + self.margin + self.cell_radius + 4)
-                    dx = mx - center_x
-                    dy = my - center_y
-                    d2 = dx * dx + dy * dy
-                    if d2 < closest_d:
-                        closest_d = d2
-                        closest = (center_x, center_y, cell)
+        mx, my = pygame.mouse.get_pos()
+        closest = None
+        closest_d = float('inf')
+        hovered_unit = None
+        # find nearest cell center within reasonable radius
+        for x in range(self.board.width):
+            for y in range(self.board.height):
+                cell = self.board.get_cell((x, y))
+                q, r = oddr_to_axial((x, y))
+                px, py = hex_to_pixel(q, r, self.cell_radius)
+                center_x = int(px + self.left_offset + self.margin)
+                center_y = int(py + self.margin + self.cell_radius + 4)
+                dx = mx - center_x
+                dy = my - center_y
+                d2 = dx * dx + dy * dy
+                if d2 < closest_d:
+                    closest_d = d2
+                    closest = (center_x, center_y, cell)
 
-            if closest is not None:
-                cx, cy, cell = closest
-                # Accept hover if within cell radius
-                if closest_d <= (self.cell_radius * 0.9) ** 2 and cell is not None and getattr(cell, 'unit', None) is not None:
-                    hovered_unit = cell.unit
+        if closest is not None:
+            cx, cy, cell = closest
+            # Accept hover if within cell radius
+            if closest_d <= (self.cell_radius * 0.9) ** 2 and cell is not None and getattr(cell, 'unit', None) is not None:
+                hovered_unit = cell.unit
 
-            if hovered_unit is not None:
-                # Build tooltip contents: unit name (title), spell name, description, and unit health/mana
-                spell = getattr(hovered_unit.base_stats, 'spell', None)
-                try:
-                    title = hovered_unit.unit_type.value
-                    title = title[0].upper() + title[1:]  # Capitalize first letter
-                except Exception:
-                    title = "Unit"
+        if hovered_unit is not None:
+            # Build tooltip contents: unit name (title), spell name, description, and unit health/mana
+            spell = getattr(hovered_unit.base_stats, 'spell', None)
+            title = hovered_unit.unit_type.value
+            title = title[0].upper() + title[1:]  # Capitalize first letter
+            spell_name = spell.name if spell is not None else 'No Spell'
 
-                try:
-                    spell_name = spell.name if spell is not None else 'No Spell'
-                except Exception:
-                    spell_name = 'No Spell'
-                # Ensure first letter is capitalized (preserve the rest)
-                if spell_name:
-                    spell_name = spell_name[0].upper() + spell_name[1:]
+            # Ensure first letter is capitalized (preserve the rest)
+            if spell_name:
+                spell_name = spell_name[0].upper() + spell_name[1:]
+            desc = spell.description() if spell is not None else "No description available."
 
-                try:
-                    desc = spell.description() if spell is not None else "No description available."
-                except Exception:
-                    desc = "No description available."
+            # Numeric health/mana
+            cur_hp = int(max(0, hovered_unit.current_health))
+            max_hp = int(hovered_unit.get_max_health())
+            cur_mana = int(max(0, hovered_unit.current_mana))
+            max_mana = int(getattr(hovered_unit.base_stats, 'max_mana', 0) or 0)
 
-                # Numeric health/mana
-                cur_hp = int(max(0, hovered_unit.current_health))
-                max_hp = int(hovered_unit.get_max_health())
-                cur_mana = int(max(0, hovered_unit.current_mana))
-                max_mana = int(getattr(hovered_unit.base_stats, 'max_mana', 0) or 0)
-
-                # Wrap description to multiple lines using tooltip font
-                max_width = self.tooltip_max_width
-                words = desc.split()
-                cur = ''
-                desc_lines = []
-                for w in words:
-                    test = (cur + ' ' + w).strip()
-                    surf = self.tooltip_font.render(test, True, (255, 255, 255))
-                    if surf.get_width() > max_width and cur:
-                        desc_lines.append(cur)
-                        cur = w
-                    else:
-                        cur = test
-                if cur:
+            # Wrap description to multiple lines using tooltip font
+            max_width = self.tooltip_max_width
+            words = desc.split()
+            cur = ''
+            desc_lines = []
+            for w in words:
+                test = (cur + ' ' + w).strip()
+                surf = self.tooltip_font.render(test, True, (255, 255, 255))
+                if surf.get_width() > max_width and cur:
                     desc_lines.append(cur)
+                    cur = w
+                else:
+                    cur = test
+            if cur:
+                desc_lines.append(cur)
 
-                # Render tooltip box slightly offset from mouse so it doesn't sit under cursor
-                pad = self.cell_radius // 2
-                title_surf = self.tooltip_font.render(title, True, (250, 250, 210))
-                desc_surfs = [self.tooltip_font.render(l, True, (230, 230, 230)) for l in desc_lines]
-                # numeric text for hp/mana
-                nm_font = self.tooltip_font
-                hp_text = f"HP: {cur_hp}/{max_hp}"
-                mana_text = f"Mana: {cur_mana}/{max_mana}" if max_mana > 0 else "Mana: 0/0"
-                hp_surf = nm_font.render(hp_text, True, (230, 230, 230))
-                mana_surf = nm_font.render(mana_text, True, (230, 230, 230))
-                # spell name surface (render below bars)
-                spell_surf = self.tooltip_font.render(spell_name, True, (200, 200, 255))
+            # Render tooltip box slightly offset from mouse so it doesn't sit under cursor
+            pad = self.cell_radius // 2
+            title_surf = self.tooltip_font.render(title, True, (250, 250, 210))
+            desc_surfs = [self.tooltip_font.render(l, True, (230, 230, 230)) for l in desc_lines]
+            # numeric text for hp/mana
+            nm_font = self.tooltip_font
+            hp_text = f"HP: {cur_hp}/{max_hp}"
+            mana_text = f"Mana: {cur_mana}/{max_mana}" if max_mana > 0 else "Mana: 0/0"
+            hp_surf = nm_font.render(hp_text, True, (230, 230, 230))
+            mana_surf = nm_font.render(mana_text, True, (230, 230, 230))
+            # spell name surface (render below bars)
+            spell_surf = self.tooltip_font.render(spell_name, True, (200, 200, 255))
 
-                # Determine box width and height; include space for two small bars and spell name
-                bar_w = min(200, max_width)
-                bar_h = max(6, int(self.cell_radius * 0.18))
+            # Determine box width and height; include space for two small bars and spell name
+            bar_w = min(200, max_width)
+            bar_h = max(6, int(self.cell_radius * 0.18))
 
-                # Prepare stats block (three columns) and include its size when computing tooltip dimensions
-                bs = hovered_unit.base_stats
-                stats = [
-                    ("ATK", str(int(hovered_unit.get_attack()))),
-                    ("AS", f"{hovered_unit.get_attack_speed():.2f}"),
-                    ("SP", f"{getattr(bs, 'spell_power', 0):.0f}"),
-                    ("RNG", str(int(getattr(bs, 'range', 1)))),
-                    ("DEF", str(int(hovered_unit.get_defense()))),
-                    ("RES", str(int(hovered_unit.get_resistance()))),
-                    ("CR", f"{getattr(bs, 'crit_rate', 0.0)*100:.0f}%"),
-                    ("CD", f"{getattr(bs, 'crit_dmg', 1.0):.1f}x"),
+            # Prepare stats block (three columns) and include its size when computing tooltip dimensions
+            bs = hovered_unit.base_stats
+            stats = [
+                ("ATK", str(int(hovered_unit.get_attack()))),
+                ("AS", f"{hovered_unit.get_attack_speed():.2f}"),
+                ("SP", f"{getattr(bs, 'spell_power', 0):.0f}"),
+                ("RNG", str(int(getattr(bs, 'range', 1)))),
+                ("DEF", str(int(hovered_unit.get_defense()))),
+                ("RES", str(int(hovered_unit.get_resistance()))),
+                ("CR", f"{getattr(bs, 'crit_rate', 0.0)*100:.0f}%"),
+                ("CD", f"{getattr(bs, 'crit_dmg', 1.0):.1f}x"),
 
-                ]
-                stat_font = self.tooltip_font
-                # Split into four roughly-equal columns
-                n = len(stats)
-                per_col = (n + 3) // 4
-                left_stats = stats[:per_col]
-                midleft_stats = stats[per_col:per_col * 2]
-                midright_stats = stats[per_col * 2:per_col * 3]
-                right_stats = stats[per_col * 3:]
+            ]
+            stat_font = self.tooltip_font
+            # Split into four roughly-equal columns
+            n = len(stats)
+            per_col = (n + 3) // 4
+            left_stats = stats[:per_col]
+            midleft_stats = stats[per_col:per_col * 2]
+            midright_stats = stats[per_col * 2:per_col * 3]
+            right_stats = stats[per_col * 3:]
 
-                left_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in left_stats]
-                midleft_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midleft_stats]
-                midright_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midright_stats]
-                right_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in right_stats]
+            left_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in left_stats]
+            midleft_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midleft_stats]
+            midright_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midright_stats]
+            right_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in right_stats]
 
-                left_w = max((s.get_width() for s in left_surfs), default=0)
-                midleft_w = max((s.get_width() for s in midleft_surfs), default=0)
-                midright_w = max((s.get_width() for s in midright_surfs), default=0)
-                right_w = max((s.get_width() for s in right_surfs), default=0)
-                gap_cols = 10
-                stats_block_w = left_w + (midleft_w and gap_cols + midleft_w or 0) + (midright_w and gap_cols + midright_w or 0) + (right_w and gap_cols + right_w or 0)
-                # height of stats block is the max column height
-                left_h = sum(s.get_height() + 2 for s in left_surfs)
-                midleft_h = sum(s.get_height() + 2 for s in midleft_surfs)
-                midright_h = sum(s.get_height() + 2 for s in midright_surfs)
-                right_h = sum(s.get_height() + 2 for s in right_surfs)
-                stats_block_h = max(left_h, midleft_h, midright_h, right_h)
+            left_w = max((s.get_width() for s in left_surfs), default=0)
+            midleft_w = max((s.get_width() for s in midleft_surfs), default=0)
+            midright_w = max((s.get_width() for s in midright_surfs), default=0)
+            right_w = max((s.get_width() for s in right_surfs), default=0)
+            gap_cols = 10
+            stats_block_w = left_w + (midleft_w and gap_cols + midleft_w or 0) + (midright_w and gap_cols + midright_w or 0) + (right_w and gap_cols + right_w or 0)
+            # height of stats block is the max column height
+            left_h = sum(s.get_height() + 2 for s in left_surfs)
+            midleft_h = sum(s.get_height() + 2 for s in midleft_surfs)
+            midright_h = sum(s.get_height() + 2 for s in midright_surfs)
+            right_h = sum(s.get_height() + 2 for s in right_surfs)
+            stats_block_h = max(left_h, midleft_h, midright_h, right_h)
 
-                content_w = max(title_surf.get_width(), spell_surf.get_width(), hp_surf.get_width() + bar_w + 8, mana_surf.get_width() + bar_w + 8,
-                                *(s.get_width() for s in desc_surfs), stats_block_w)
-                box_w = content_w + pad * 2
-                # compute height: title + gap + (bar_h + text) for hp + gap + (bar_h + text) for mana + gap + stats block + gap + spell name + gap + desc lines
-                spacing = 6
-                box_h = (pad + title_surf.get_height() + spacing + max(bar_h, hp_surf.get_height()) + spacing +
-                         max(bar_h, mana_surf.get_height()) + spacing + stats_block_h + spacing + spell_surf.get_height() + spacing + sum(s.get_height() + 4 for s in desc_surfs) + pad)
-                bx = mx + 16
-                by = my + 16
-                # clamp to window bounds
-                if bx + box_w > self.window_size[0] - 4:
-                    bx = mx - box_w - 16
-                if by + box_h > self.window_size[1] - 4:
-                    by = my - box_h - 16
+            content_w = max(title_surf.get_width(), spell_surf.get_width(), hp_surf.get_width() + bar_w + 8, mana_surf.get_width() + bar_w + 8,
+                            *(s.get_width() for s in desc_surfs), stats_block_w)
+            box_w = content_w + pad * 2
+            # compute height: title + gap + (bar_h + text) for hp + gap + (bar_h + text) for mana + gap + stats block + gap + spell name + gap + desc lines
+            spacing = 6
+            box_h = (pad + title_surf.get_height() + spacing + max(bar_h, hp_surf.get_height()) + spacing +
+                        max(bar_h, mana_surf.get_height()) + spacing + stats_block_h + spacing + spell_surf.get_height() + spacing + sum(s.get_height() + 4 for s in desc_surfs) + pad)
+            bx = mx + 16
+            by = my + 16
+            # clamp to window bounds
+            if bx + box_w > self.window_size[0] - 4:
+                bx = mx - box_w - 16
+            if by + box_h > self.window_size[1] - 4:
+                by = my - box_h - 16
 
-                # background
-                tooltip_surf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
-                pygame.draw.rect(tooltip_surf, (20, 20, 20, 220), (0, 0, box_w, box_h), border_radius=6)
-                # border
-                pygame.draw.rect(tooltip_surf, (140, 140, 140, 200), (0, 0, box_w, box_h), 1, border_radius=6)
+            # background
+            tooltip_surf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+            pygame.draw.rect(tooltip_surf, (20, 20, 20, 220), (0, 0, box_w, box_h), border_radius=6)
+            # border
+            pygame.draw.rect(tooltip_surf, (140, 140, 140, 200), (0, 0, box_w, box_h), 1, border_radius=6)
 
-                yoff = pad
-                # title
-                tooltip_surf.blit(title_surf, (pad, yoff))
-                yoff += title_surf.get_height() + spacing
+            yoff = pad
+            # title
+            tooltip_surf.blit(title_surf, (pad, yoff))
+            yoff += title_surf.get_height() + spacing
 
-                # HP bar + numeric
-                bar_x = pad
-                bar_y = yoff + max(0, (max(0, bar_h - hp_surf.get_height()) // 2))
-                # draw bar background
-                pygame.draw.rect(tooltip_surf, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
-                hp_ratio = max(0.0, min(1.0, hovered_unit.current_health / float(max(1, hovered_unit.get_max_health()))))
-                pygame.draw.rect(tooltip_surf, (50, 200, 100), (bar_x, bar_y, int(bar_w * hp_ratio), bar_h))
-                # numeric on the right of bar
-                tooltip_surf.blit(hp_surf, (bar_x + bar_w + 8, yoff - hp_surf.get_height()//2))
-                yoff += max(bar_h, hp_surf.get_height()) + spacing
+            # HP bar + numeric
+            bar_x = pad
+            bar_y = yoff + max(0, (max(0, bar_h - hp_surf.get_height()) // 2))
+            # draw bar background
+            pygame.draw.rect(tooltip_surf, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
+            hp_ratio = max(0.0, min(1.0, hovered_unit.current_health / float(max(1, hovered_unit.get_max_health()))))
+            pygame.draw.rect(tooltip_surf, (50, 200, 100), (bar_x, bar_y, int(bar_w * hp_ratio), bar_h))
+            # numeric on the right of bar
+            tooltip_surf.blit(hp_surf, (bar_x + bar_w + 8, yoff - hp_surf.get_height()//2))
+            yoff += max(bar_h, hp_surf.get_height()) + spacing
 
-                # Mana bar + numeric
-                bar_x = pad
-                bar_y = yoff + max(0, (max(0, bar_h - mana_surf.get_height()) // 3))
-                pygame.draw.rect(tooltip_surf, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
-                mana_ratio = 0.0
-                if max_mana > 0:
-                    try:
-                        mana_ratio = max(0.0, min(1.0, hovered_unit.current_mana / float(max_mana)))
-                    except Exception:
-                        mana_ratio = 0.0
-                pygame.draw.rect(tooltip_surf, (80, 140, 220), (bar_x, bar_y, int(bar_w * mana_ratio), bar_h))
-                tooltip_surf.blit(mana_surf, (bar_x + bar_w + 8, yoff - mana_surf.get_height()//3))
-                yoff += max(bar_h, mana_surf.get_height()) + spacing
-
-
-                # Render surfaces for each stat column
-                stat_font = self.tooltip_font
-                left_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in left_stats]
-                midleft_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midleft_stats]
-                midright_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midright_stats]
-                right_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in right_stats]
-
-                # Compute widths
-                left_w = max((s.get_width() for s in left_surfs), default=0)
-                midleft_w = max((s.get_width() for s in midleft_surfs), default=0)
-                midright_w = max((s.get_width() for s in midright_surfs), default=0)
-                right_w = max((s.get_width() for s in right_surfs), default=0)
-                gap_cols = 12
-                stats_block_w = left_w + (midleft_w and gap_cols + midleft_w or 0) + (midright_w and gap_cols + midright_w or 0) + (right_w and gap_cols + right_w or 0)
-
-                # Ensure tooltip width accommodates stats block
-                content_w = max(content_w, stats_block_w + pad * 2)
-                box_w = content_w + pad * 2
-
-                # Draw stat lines (three columns)
-                col_x = pad
-                # left column
-                for i, s in enumerate(left_surfs):
-                    tooltip_surf.blit(s, (col_x, yoff + i * (s.get_height() + 2)))
-                # middle columns
-                if midleft_surfs:
-                    midleft_x = pad + left_w + gap_cols
-                    for i, s in enumerate(midleft_surfs):
-                        tooltip_surf.blit(s, (midleft_x, yoff + i * (s.get_height() + 2)))
-                if midright_surfs:
-                    midright_x = pad + left_w + gap_cols + midleft_w + gap_cols
-                    for i, s in enumerate(midright_surfs):
-                        tooltip_surf.blit(s, (midright_x, yoff + i * (s.get_height() + 2)))
-                # right column
-                if right_surfs:
-                    right_x = pad + left_w + gap_cols + midleft_w + gap_cols + midright_w + gap_cols
-                    for i, s in enumerate(right_surfs):
-                        tooltip_surf.blit(s, (right_x, yoff + i * (s.get_height() + 2)))
-
-                # advance yoff by the stats block height
-                yoff += stats_block_h + spacing
+            # Mana bar + numeric
+            bar_x = pad
+            bar_y = yoff + max(0, (max(0, bar_h - mana_surf.get_height()) // 3))
+            pygame.draw.rect(tooltip_surf, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
+            mana_ratio = 0.0
+            if max_mana > 0:
+                mana_ratio = max(0.0, min(1.0, hovered_unit.current_mana / float(max_mana)))
+            pygame.draw.rect(tooltip_surf, (80, 140, 220), (bar_x, bar_y, int(bar_w * mana_ratio), bar_h))
+            tooltip_surf.blit(mana_surf, (bar_x + bar_w + 8, yoff - mana_surf.get_height()//3))
+            yoff += max(bar_h, mana_surf.get_height()) + spacing
 
 
-                # Spell name (below bars)
-                try:
-                    spell_surf = self.tooltip_font.render(spell_name, True, (200, 200, 255))
-                    tooltip_surf.blit(spell_surf, (pad, yoff))
-                    yoff += spell_surf.get_height() + spacing
-                except Exception:
-                    pass
+            # Render surfaces for each stat column
+            stat_font = self.tooltip_font
+            left_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in left_stats]
+            midleft_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midleft_stats]
+            midright_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midright_stats]
+            right_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in right_stats]
 
-                # description lines
-                for s in desc_surfs:
-                    tooltip_surf.blit(s, (pad, yoff))
-                    yoff += s.get_height() + 4
+            # Compute widths
+            left_w = max((s.get_width() for s in left_surfs), default=0)
+            midleft_w = max((s.get_width() for s in midleft_surfs), default=0)
+            midright_w = max((s.get_width() for s in midright_surfs), default=0)
+            right_w = max((s.get_width() for s in right_surfs), default=0)
+            gap_cols = 12
+            stats_block_w = left_w + (midleft_w and gap_cols + midleft_w or 0) + (midright_w and gap_cols + midright_w or 0) + (right_w and gap_cols + right_w or 0)
 
-                self.screen.blit(tooltip_surf, (bx, by))
-        except Exception:
-            # Never crash rendering on hover
-            pass
+            # Ensure tooltip width accommodates stats block
+            content_w = max(content_w, stats_block_w + pad * 2)
+            box_w = content_w + pad * 2
+
+            # Draw stat lines (three columns)
+            col_x = pad
+            # left column
+            for i, s in enumerate(left_surfs):
+                tooltip_surf.blit(s, (col_x, yoff + i * (s.get_height() + 2)))
+            # middle columns
+            if midleft_surfs:
+                midleft_x = pad + left_w + gap_cols
+                for i, s in enumerate(midleft_surfs):
+                    tooltip_surf.blit(s, (midleft_x, yoff + i * (s.get_height() + 2)))
+            if midright_surfs:
+                midright_x = pad + left_w + gap_cols + midleft_w + gap_cols
+                for i, s in enumerate(midright_surfs):
+                    tooltip_surf.blit(s, (midright_x, yoff + i * (s.get_height() + 2)))
+            # right column
+            if right_surfs:
+                right_x = pad + left_w + gap_cols + midleft_w + gap_cols + midright_w + gap_cols
+                for i, s in enumerate(right_surfs):
+                    tooltip_surf.blit(s, (right_x, yoff + i * (s.get_height() + 2)))
+
+            # advance yoff by the stats block height
+            yoff += stats_block_h + spacing
+
+            # Spell name (below bars)
+            spell_surf = self.tooltip_font.render(spell_name, True, (200, 200, 255))
+            tooltip_surf.blit(spell_surf, (pad, yoff))
+            yoff += spell_surf.get_height() + spacing
+
+
+            # description lines
+            for s in desc_surfs:
+                tooltip_surf.blit(s, (pad, yoff))
+                yoff += s.get_height() + 4
+
+            self.screen.blit(tooltip_surf, (bx, by))
+            
     def present(self):
         pygame.display.flip()
         self.clock.tick(self.render_fps)
@@ -890,10 +816,7 @@ class PygameBoardVisualizer:
         """Draw any deferred tooltip surfaces (ensures they render above other UI)."""
         try:
             for surf, x, y in list(self._deferred_tooltips):
-                try:
-                    self.screen.blit(surf, (x, y))
-                except Exception:
-                    pass
+                self.screen.blit(surf, (x, y))
         finally:
             self._deferred_tooltips.clear()
 
@@ -914,41 +837,36 @@ class PygameBoardVisualizer:
         paused: True -> show 'Start' (since simulation is paused)
         paused: False -> show 'Pause'
         """
-        try:
-            rect = self.get_pause_button_rect()
-            surf = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
-            # background color depends on state
-            bg = (70, 70, 70) if paused else (40, 120, 40)
-            pygame.draw.rect(surf, bg, (0, 0, rect.w, rect.h), border_radius=6)
-            pygame.draw.rect(surf, (160, 160, 160), (0, 0, rect.w, rect.h), 1, border_radius=6)
-            label = 'Start' if paused else 'Pause'
-            lab_surf = self.tooltip_font.render(label, True, (255, 255, 255))
-            lab_rect = lab_surf.get_rect(center=(rect.w // 2, rect.h // 2))
-            surf.blit(lab_surf, lab_rect)
-            self.screen.blit(surf, (rect.x, rect.y))
-            # Hover tooltip for pause/start button
-            try:
-                mx, my = pygame.mouse.get_pos()
-                if rect.collidepoint((mx, my)):
-                    tip = 'Start simulation' if paused else 'Pause simulation'
-                    tip_surf = self.tooltip_font.render(tip, True, (230, 230, 230))
-                    pw = tip_surf.get_width() + 12
-                    ph = tip_surf.get_height() + 8
-                    bx = mx + 12
-                    by = my + 12
-                    if bx + pw > self.window_size[0] - 4:
-                        bx = mx - pw - 12
-                    if by + ph > self.window_size[1] - 4:
-                        by = my - ph - 12
-                    surf2 = pygame.Surface((pw, ph), pygame.SRCALPHA)
-                    pygame.draw.rect(surf2, (30, 30, 30, 220), (0, 0, pw, ph), border_radius=6)
-                    pygame.draw.rect(surf2, (120, 120, 120), (0, 0, pw, ph), 1, border_radius=6)
-                    surf2.blit(tip_surf, (6, 4))
-                    self.screen.blit(surf2, (bx, by))
-            except Exception:
-                pass
-        except Exception:
-            pass
+        rect = self.get_pause_button_rect()
+        surf = pygame.Surface((rect.w, rect.h), pygame.SRCALPHA)
+        # background color depends on state
+        bg = (70, 70, 70) if paused else (40, 120, 40)
+        pygame.draw.rect(surf, bg, (0, 0, rect.w, rect.h), border_radius=6)
+        pygame.draw.rect(surf, (160, 160, 160), (0, 0, rect.w, rect.h), 1, border_radius=6)
+        label = 'Start' if paused else 'Pause'
+        lab_surf = self.tooltip_font.render(label, True, (255, 255, 255))
+        lab_rect = lab_surf.get_rect(center=(rect.w // 2, rect.h // 2))
+        surf.blit(lab_surf, lab_rect)
+        self.screen.blit(surf, (rect.x, rect.y))
+        # Hover tooltip for pause/start button
+        mx, my = pygame.mouse.get_pos()
+        if rect.collidepoint((mx, my)):
+            tip = 'Start simulation' if paused else 'Pause simulation'
+            tip_surf = self.tooltip_font.render(tip, True, (230, 230, 230))
+            pw = tip_surf.get_width() + 12
+            ph = tip_surf.get_height() + 8
+            bx = mx + 12
+            by = my + 12
+            if bx + pw > self.window_size[0] - 4:
+                bx = mx - pw - 12
+            if by + ph > self.window_size[1] - 4:
+                by = my - ph - 12
+            surf2 = pygame.Surface((pw, ph), pygame.SRCALPHA)
+            pygame.draw.rect(surf2, (30, 30, 30, 220), (0, 0, pw, ph), border_radius=6)
+            pygame.draw.rect(surf2, (120, 120, 120), (0, 0, pw, ph), 1, border_radius=6)
+            surf2.blit(tip_surf, (6, 4))
+            self.screen.blit(surf2, (bx, by))
+
 
     def get_spawn_button_rect(self, index: int, total: int = 4) -> pygame.Rect:
         """Return a rect for one of the spawn buttons arranged below the board.
@@ -1005,10 +923,8 @@ class PygameBoardVisualizer:
             pygame.draw.rect(surf, bg_col, (0, 0, rect.w, rect.h), border_radius=6)
             pygame.draw.rect(surf, (140, 140, 140), (0, 0, rect.w, rect.h), 1, border_radius=6)
             # label
-            try:
-                label = ut.value.capitalize() if hasattr(ut, 'value') else str(ut).capitalize()
-            except Exception:
-                label = str(ut)
+            label = ut.value.capitalize() if hasattr(ut, 'value') else str(ut).capitalize()
+
             if cost is not None:
                 label = f"{label} ({int(cost)})"
             col = (180, 180, 180) if disabled else (255, 255, 255)
@@ -1021,12 +937,9 @@ class PygameBoardVisualizer:
             if not hover_drawn and rect.collidepoint((mx, my)):
                 hover_drawn = True
                 # attempt to instantiate a temporary unit to get spell description
-                try:
-                    tmp_unit = Unit(unit_type=ut, rarity=UnitRarity.COMMON, team=2, level=1)
-                    spell = getattr(tmp_unit.base_stats, 'spell', None)
-                    desc = spell.description() if spell is not None else 'No spell.'
-                except Exception:
-                    desc = 'No description available.'
+                tmp_unit = Unit(unit_type=ut, rarity=UnitRarity.COMMON, team=2, level=1)
+                spell = getattr(tmp_unit.base_stats, 'spell', None)
+                desc = spell.description() if spell is not None else 'No spell.'
 
                 title = ut.value.capitalize() if hasattr(ut, 'value') else str(ut).capitalize()
                 cost_text = f"Cost: {int(cost)}" if cost is not None else ''
@@ -1076,11 +989,98 @@ class PygameBoardVisualizer:
                     yoff += s.get_height() + 4
 
                 # Defer blitting the spawn tooltip so it can be drawn above other UI
-                try:
-                    self._deferred_tooltips.append((tsurf, bx, by))
-                except Exception:
-                    # fallback to immediate blit
-                    self.screen.blit(tsurf, (bx, by))
+                self._deferred_tooltips.append((tsurf, bx, by))
+
+
+    def _collect_move_animation(self, action, sim_frame: int, sim_progress: float, moving_map: dict):
+        """Populate moving_map for a MOVE action (interpolated pixel position)."""
+        if not (getattr(action, 'start_position', None) and getattr(action, 'target_position', None)):
+            return
+        if getattr(action, 'resolution_frame', 0) <= sim_frame:
+            return
+        start_f = action.planned_frame
+        end_f = action.resolution_frame
+        denom = max(1, end_f - start_f)
+        t = (sim_frame + sim_progress - start_f) / denom
+        t = max(0.0, min(1.0, t))
+
+        q1, r1 = oddr_to_axial(action.start_position)
+        q2, r2 = oddr_to_axial(action.target_position)
+        x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
+        x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
+        cx1 = x1 + self.left_offset + self.margin
+        cy1 = y1 + self.margin + self.cell_radius + 4
+        cx2 = x2 + self.left_offset + self.margin
+        cy2 = y2 + self.margin + self.cell_radius + 4
+
+        ix = int(cx1 + (cx2 - cx1) * t)
+        iy = int(cy1 + (cy2 - cy1) * t)
+        moving_map[action.unit.id] = (action.unit, ix, iy, action)
+
+    def _collect_attack_animation(self, action, sim_frame: int, sim_progress: float, attack_anims: list):
+        """Append attack animation tuple for ATTACK actions."""
+        if not (getattr(action, 'start_position', None) and getattr(action, 'target', None) and getattr(action.target, 'position', None)):
+            return
+        if getattr(action, 'resolution_frame', 0) <= sim_frame:
+            return
+        start_f = action.planned_frame
+        end_f = action.resolution_frame
+        denom = max(1, end_f - start_f)
+        t = (sim_frame + sim_progress - start_f) / denom
+        t = max(0.0, min(1.0, t))
+
+        q1, r1 = oddr_to_axial(action.start_position)
+        q2, r2 = oddr_to_axial(action.target.position)
+        x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
+        x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
+        cx1 = x1 + self.left_offset + self.margin
+        cy1 = y1 + self.margin + self.cell_radius + 4
+        cx2 = x2 + self.left_offset + self.margin
+        cy2 = y2 + self.margin + self.cell_radius + 4
+
+        cur_x = cx1 + (cx2 - cx1) * t
+        cur_y = cy1 + (cy2 - cy1) * t
+        attack_anims.append((action, cx1, cy1, cur_x, cur_y, t))
+
+    def _collect_spell_projectile(self, action, sim_frame: int, sim_progress: float, spell_projectiles: list):
+        """Append projectile animations for certain spell casts (e.g., Fireball)."""
+        if getattr(action, 'spell_instance', None) is None:
+            return
+        spell_name = getattr(action.spell_instance, 'name', None)
+        if spell_name not in ('Fireball', 'Spin Slash'):
+            return
+        if getattr(action, 'start_position', None) is None:
+            return
+        if getattr(action, 'resolution_frame', 0) <= sim_frame:
+            return
+        start_f = action.planned_frame
+        end_f = action.resolution_frame
+        denom = max(1, end_f - start_f)
+        t = (sim_frame + sim_progress - start_f) / denom
+        t = max(0.0, min(1.0, t))
+
+        q1, r1 = oddr_to_axial(action.start_position)
+        x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
+        cx1 = x1 + self.left_offset + self.margin
+        cy1 = y1 + self.margin + self.cell_radius + 4
+
+        target_pos = None
+        if getattr(action, 'target', None) and getattr(action.target, 'position', None):
+            target_pos = action.target.position
+        elif getattr(action, 'target_position', None):
+            target_pos = action.target_position
+
+        if target_pos is None:
+            return
+
+        q2, r2 = oddr_to_axial(target_pos)
+        x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
+        cx2 = x2 + self.left_offset + self.margin
+        cy2 = y2 + self.margin + self.cell_radius + 4
+
+        cur_x = cx1 + (cx2 - cx1) * t
+        cur_y = cy1 + (cy2 - cy1) * t
+        spell_projectiles.append((action, cx1, cy1, cx2, cy2, cur_x, cur_y, t))
 
 
     def get_cell_center(self, position: Tuple[int, int]) -> Tuple[int, int]:

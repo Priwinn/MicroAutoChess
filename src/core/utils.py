@@ -3,21 +3,6 @@ from board import Board, HexBoard
 from constant_types import UnitRarity, UnitType
 from units import Unit
 
-TEAM1_POSITION_MAP1: Dict[Tuple[int, int], UnitType] = {
-    (3, 3): UnitType.TANK,
-    (2, 3): UnitType.TANK,
-    (1, 2): UnitType.ARCHER,
-    (0, 1): UnitType.MAGE,
-}
-
-TEAM1_POSITION_MAP2: Dict[Tuple[int, int], UnitType] = {
-    (3, 3): UnitType.TANK,
-    (2, 3): UnitType.WARRIOR,
-    (1, 2): UnitType.ARCHER,
-    (1, 1): UnitType.ASSASSIN,
-}
-
-
 def setup_board_from_dict(board_size, unit_dict: Dict[Tuple[int, int], UnitType]) -> Tuple[Board, List[Unit], List[Unit]]:
     """Helper function to set up the board from a dictionary mapping positions to units."""
     board = HexBoard(board_size)

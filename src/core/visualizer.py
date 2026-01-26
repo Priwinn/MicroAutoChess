@@ -136,150 +136,285 @@ class PygameBoardVisualizer:
                 elif action.action_type == CombatAction.ATTACK:
                     self._collect_attack_animation(action, sim_frame, sim_progress, attack_anims)
                 elif action.action_type == CombatAction.CAST_SPELL:
-                    # Allow spell instance to describe its projectile animation
-                    desc = action.spell_instance.projectile_render_callback(action.unit, self.board)
-                    # reuse existing helper to compute positions, then append descriptor
-                    if action.start_position is not None and action.resolution_frame > sim_frame:
-                        # compute interpolated positions like before
-                        start_f = action.planned_frame
-                        end_f = action.resolution_frame
-                        denom = max(1, end_f - start_f)
-                        t = (sim_frame + sim_progress - start_f) / denom
-                        t = max(0.0, min(1.0, t))
+                    self._collect_cast_spell_animation(action, sim_frame, sim_progress, spell_projectiles)
 
-                        q1, r1 = oddr_to_axial(action.start_position)
-                        x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
-                        cx1 = x1 + self.left_offset + self.margin
-                        cy1 = y1 + self.margin + self.cell_radius + 4
-
-                        target_pos = None
-                        if action.target is not None and action.target.position is not None:
-                            target_pos = action.target.position
-                        elif getattr(action, 'target_position', None):
-                            target_pos = action.target_position
-
-                        if target_pos is not None:
-                            q2, r2 = oddr_to_axial(target_pos)
-                            x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
-                            cx2 = x2 + self.left_offset + self.margin
-                            cy2 = y2 + self.margin + self.cell_radius + 4
-
-                            cur_x = cx1 + (cx2 - cx1) * t
-                            cur_y = cy1 + (cy2 - cy1) * t
-                            spell_projectiles.append((action, cx1, cy1, cx2, cy2, cur_x, cur_y, t, desc))
-
-            # Collect damage events from engine combat log and create floating texts
+            # Combat log processing: delegate to helpers for clarity
             now = pygame.time.get_ticks() / 1000.0
             for ev in engine.combat_log:
-                # Spell planning -> start spin animation
+                # Spell planning (spin)
                 if getattr(ev, 'event_type', None) == CombatEventType.ACTION_PLANNED and getattr(ev, 'spell_name', None) and id(ev) not in self._seen_events:
-                    source = ev.source
-                    if source is not None and source.id is not None:
-                        spin_duration = 0.6
-                        spin_speed = 360.0/spin_duration  # degrees per second
-                        self.spin_animations.append([source.id, now, spin_duration, spin_speed])
-                        self._seen_events.add(id(ev))
-                # Spell execution: AoE spells
+                    self._handle_spell_planning(ev, now)
+                # Spell execution (on-hit descriptors)
                 if ev.event_type == CombatEventType.SPELL_EXECUTED and id(ev) not in self._seen_events:
-                    # Try to obtain a spell instance from the event or by name 
-                    # TODO:currently we dont pass instance. It might be useful to animate changing spells later
-                    spell_inst = getattr(ev, 'spell_instance', None)
-                    if spell_inst is None and getattr(ev, 'spell_name', None):
-                        spell_inst = spells.get_spell_instance_by_name(ev.spell_name)
-                    if spell_inst is not None:
-                        # let spell instance describe its on-hit animation
-                        desc = spell_inst.on_hit_render_callback(ev.source, self.board)
-                        pos = ev.position
-                        if pos is None and ev.target is not None and ev.target.position is not None:
-                            pos = ev.target.position
-                        # interpret descriptor(s)
-                        if desc is not None and pos is not None:
-                            if desc.get('type') == 'aoe':
-                                radius_hex = desc.get('radius_hex', 1)
-                                duration = desc.get('duration', 0.6)
-                                team = ev.source and ev.source.team
-                                color = self.team_colors.get(team, desc.get('color_hint', (200, 40, 40)))
-                                self.aoe_animations.append([pos, radius_hex, now, duration, color])
-                                self._seen_events.add(id(ev))
-                            elif desc.get('type') == 'particles':
-                                src = ev.source
-                                if src is not None and src.position is not None:
-                                    q, r = oddr_to_axial(src.position)
-                                    px, py = hex_to_pixel(q, r, self.cell_radius)
-                                    cx = int(px + self.left_offset + self.margin)
-                                    cy = int(py + self.margin + self.cell_radius + 4)
-                                    base_color = desc.get('base_color_hint') or self.team_colors.get(src.team, (200, 200, 50))
-                                    num_particles = desc.get('num', 20)
-                                    lifetime_range = desc.get('lifetime_range', (0.5, 1.2))
-                                    size_range = desc.get('size_range', (3, 6))
-                                    speed_mult_range = desc.get('speed_mult_range', (0.6, 1.6))
-                                    for i in range(num_particles):
-                                        ang = (2 * math.pi * i / num_particles) + random.uniform(-0.4, 0.4)
-                                        speed = random.uniform(self.cell_radius * speed_mult_range[0], self.cell_radius * speed_mult_range[1])
-                                        vx = math.cos(ang) * speed
-                                        vy = math.sin(ang) * speed
-                                        lifetime = random.uniform(lifetime_range[0], lifetime_range[1])
-                                        size = random.randint(size_range[0], size_range[1])
-                                        color = (min(255, int(base_color[0] * random.uniform(0.9, 1.4))),
-                                                 min(255, int(base_color[1] * random.uniform(0.9, 1.4))),
-                                                 min(255, int(base_color[2] * random.uniform(0.9, 1.4))))
-                                        self.particles.append([cx, cy, vx, vy, now, lifetime, color, size])
-                                    self._seen_events.add(id(ev))
-
+                    self._handle_spell_execution(ev, now)
+                # Damage / healing floating text
                 if getattr(ev, 'damage', 0) and ev.damage > 0 and id(ev) not in self._seen_events:
-                    # Determine position to display damage: prefer explicit position, then target position
-                    pos = None
-                    if getattr(ev, 'position', None):
-                        pos = ev.position
-                    elif getattr(ev, 'target', None) and getattr(ev.target, 'position', None):
-                        pos = ev.target.position
-
-                    # accumulate damage done by source (for damage meter)
-                    src = ev.source
-                    if src is not None and getattr(src, 'id', None) is not None:
-                        self.damage_done[src.id] += float(ev.damage)
-                        # remember unit symbol/team for charts even if unit later dies
-                        self.unit_info[src.id] = {'symbol': src._get_unit_symbol(), 'team': src.team}
-
-
-                    if pos is not None:
-                        q, r = oddr_to_axial(pos)
-                        px, py = hex_to_pixel(q, r, self.cell_radius)
-                        cx = int(px + self.left_offset + self.margin)
-                        cy = int(py + self.margin + self.cell_radius + 4)
-                        txt = str(int(ev.damage)) + ("*" if getattr(ev, 'crit_bool', False) else "")
-                        # start slightly above the unit center
-                        # initial position slightly above center
-                        x0 = cx
-                        y0 = cy - int(self.cell_radius * 0.8)
-                        duration = 0.5
-                        # random launch angle around upward (-pi/2) with wider spread
-                        # avoid angles very close to vertical by rejecting a small central gap
-                        spread = math.pi / 3
-                        gap = math.pi / 8
-                        while True:
-                            offset = random.uniform(-spread, spread)
-                            if abs(offset) >= gap:
-                                break
-                        theta = -math.pi / 2 + offset
-                        speed = self.cell_radius * random.uniform(1.2, 1.6)
-                        vx = math.cos(theta) * speed
-                        vy = math.sin(theta) * speed
-                        # Choose color based on event type (green for healing, orange for damage)
-                        if getattr(ev, 'event_type', None) == CombatEventType.HEALING_DONE:
-                            txt_color = (50, 200, 100)
-                        else:
-                            txt_color = (255, 140, 0)
-                        self.floating_texts.append([x0, y0, txt, now, duration, vx, vy, txt_color])
-                        self._seen_events.add(id(ev))
+                    self._handle_damage_event(ev, now)
 
         # Draw each cell (but skip drawing units that are currently moving - they'll be drawn interpolated)
+        # Ensure current time is available for spin/animations
+        now = pygame.time.get_ticks() / 1000.0
         # Precompute highlighted positions when requested (player initial placement zone)
         highlighted_positions = set()
         if getattr(self, 'highlight_player_initial_zone', False):
             highlighted_positions = set(self.board.get_initial_positions(2))
 
+        # Draw cells and static units
+        self._draw_cells(highlighted_positions, moving_map, now)
 
+        # Draw moving units 
+        self._draw_moving_units(moving_map, now)
+
+        self._draw_attack_and_projectiles(engine, attack_anims, spell_projectiles)
+        self._draw_aoe_animations(now)
+        self._draw_particles(now)
+        self._draw_damage_charts(engine)
+        self._draw_floating_texts(now)
+
+        # Hover tooltips
+        self._draw_hover_tooltip()
+            
+    def _draw_moving_units(self, moving_map: dict, now: float):
+        """Draw units that are currently moving (interpolated positions)."""
+        for _uid, (unit, ix, iy, action) in moving_map.items():
+            team = getattr(unit, 'team', 0)
+            color = self.team_colors.get(team, (200, 200, 200))
+            pygame.draw.circle(self.screen, color, (ix, iy), int(self.cell_radius * 0.45))
+            symbol = unit._get_unit_symbol()
+            # Check for active spin for this unit (moving units can also spin)
+            angle = 0.0
+            for s in list(self.spin_animations):
+                uid, start, duration, speed = s
+                if uid == unit.id:
+                    elapsed = now - start
+                    if elapsed <= duration:
+                        angle = (elapsed * speed) % 360.0
+                    else:
+                        self.spin_animations.remove(s)
+            text_surf = self.font.render(symbol, True, (255, 255, 255))
+            if angle != 0.0:
+                rot = pygame.transform.rotate(text_surf, angle)
+                rrect = rot.get_rect(center=(ix, iy))
+                self.screen.blit(rot, rrect)
+            else:
+                text_rect = text_surf.get_rect(center=(ix, iy))
+                self.screen.blit(text_surf, text_rect)
+
+            bar_w = int(self.cell_radius * 1.2)
+            bar_h = max(3, int(self.cell_radius * 0.12))
+            hb_x = ix - bar_w // 2
+            hb_y = iy - int(self.cell_radius * 0.75)
+            pygame.draw.rect(self.screen, (50, 50, 50), (hb_x, hb_y, bar_w, bar_h))
+            hp_ratio = max(0.0, min(1.0, unit.current_health / unit.get_max_health()))
+            pygame.draw.rect(self.screen, (50, 200, 100), (hb_x, hb_y, int(bar_w * hp_ratio), bar_h))
+            mb_y = iy - int(self.cell_radius * 0.63)
+            pygame.draw.rect(self.screen, (50, 50, 50), (hb_x, mb_y, bar_w, bar_h))
+            max_mana = getattr(unit.base_stats, 'max_mana', 0) or 1
+            mana_ratio = max(0.0, min(1.0, unit.current_mana / max_mana))
+            pygame.draw.rect(self.screen, (80, 140, 220), (hb_x, mb_y, int(bar_w * mana_ratio), bar_h))
+
+    def _draw_attack_and_projectiles(self, engine, attack_anims: list, spell_projectiles: list):
+        """Draw attack lines/dots and spell projectiles."""
+        for action, sx, sy, tx, ty, t in attack_anims:
+            atk = action.unit
+            color = self.team_colors.get(getattr(atk, 'team', None), (220, 220, 80))
+            # line thickness fades slightly with progress
+            width = max(1, int(self.cell_radius * 0.12 * (1.0 - t) + 1))
+            pygame.draw.line(self.screen, color, (sx, sy), (tx, ty), width)
+            # projectile dot at tip
+            pygame.draw.circle(self.screen, (255, 255, 255), (int(tx), int(ty)), max(2, int(self.cell_radius * 0.08)))
+
+        # Draw spell projectiles
+        for item in spell_projectiles:
+            # item: (action, sx, sy, tx, ty, cur_x, cur_y, t, desc)
+            action, sx, sy, tx, ty, cur_x, cur_y, t, desc = item
+
+            src = action.unit
+            color = self.team_colors.get(src.team, (200, 40, 40))
+            # allow descriptor to hint color
+            if desc and isinstance(desc, dict):
+                ch = desc.get('color_hint')
+                if ch:
+                    color = ch
+                glow = desc.get('glow', True)
+            else:
+                glow = True
+
+            proj_radius = max(6, int(self.cell_radius * 0.18))
+            if glow:
+                glow_surf = pygame.Surface((proj_radius*4, proj_radius*4), pygame.SRCALPHA)
+                glow_alpha = max(40, int(180 * (1.0 - t)))
+                pygame.draw.circle(glow_surf, (color[0], color[1], color[2], glow_alpha), (proj_radius*2, proj_radius*2), proj_radius*2)
+                self.screen.blit(glow_surf, (int(cur_x - proj_radius*2), int(cur_y - proj_radius*2)))
+            # core
+            pygame.draw.circle(self.screen, color, (int(cur_x), int(cur_y)), proj_radius)
+            # white highlight
+            pygame.draw.circle(self.screen, (255, 255, 255), (int(cur_x), int(cur_y)), max(1, proj_radius//3))
+
+    def _draw_aoe_animations(self, now: float):
+        aoe_remaining = []
+        for aoe in self.aoe_animations:
+            pos, radius_hex, start, duration, color = aoe
+            elapsed = now - start
+            if elapsed <= duration:
+                alpha = max(0, min(200, int(200 * (1.0 - elapsed / duration))))
+                # draw hex filled polygons for each position in l1 range
+                # Use hex-aware API to get cells in range (returns BoardCell objects)
+                cells = self.board.get_cells_in_l1_range(pos, radius_hex)
+                positions = [c.position for c in cells]
+                surf = pygame.Surface(self.window_size, pygame.SRCALPHA)
+                for p in positions:
+                    q, r = oddr_to_axial(p)
+                    px, py = hex_to_pixel(q, r, self.cell_radius)
+                    center_x = int(px + self.left_offset + self.margin)
+                    center_y = int(py + self.margin + self.cell_radius + 4)
+                    corners = hexagon_corners(center_x, center_y, self.cell_radius)
+                    int_corners = [(int(x), int(y)) for x, y in corners]
+                    pygame.draw.polygon(surf, (color[0], color[1], color[2], alpha), int_corners)
+                self.screen.blit(surf, (0, 0))
+                aoe_remaining.append(aoe)
+        self.aoe_animations = aoe_remaining
+
+    def _draw_particles(self, now: float):
+        particle_remaining = []
+        for p in self.particles:
+            x0, y0, vx, vy, start, lifetime, color, size = p
+            elapsed = now - start
+            if elapsed <= lifetime:
+                cur_x = x0 + vx * elapsed
+                cur_y = y0 + vy * elapsed
+                alpha = max(0, min(255, int(255 * (1.0 - elapsed / lifetime))))
+                # soft glow behind particle
+                glow_size = int(size * 2.5)
+                glow_alpha = max(0, min(220, int(alpha * 0.6)))
+                glow_surf = pygame.Surface((glow_size*2, glow_size*2), pygame.SRCALPHA)
+                pygame.draw.circle(glow_surf, (color[0], color[1], color[2], glow_alpha), (glow_size, glow_size), glow_size)
+                self.screen.blit(glow_surf, (int(cur_x - glow_size), int(cur_y - glow_size)))
+                # bright core
+                core_surf = pygame.Surface((size*2, size*2), pygame.SRCALPHA)
+                core_alpha = alpha
+                pygame.draw.circle(core_surf, (255, 255, 255, core_alpha), (size, size), size)
+                self.screen.blit(core_surf, (int(cur_x - size), int(cur_y - size)))
+                particle_remaining.append(p)
+        self.particles = particle_remaining
+
+    def _draw_damage_charts(self, engine):
+        if engine is None or not self.damage_done:
+            return
+        # Use the reserved right panel width for charts so the damage meter is larger
+        spacing = 12
+        total_w = int(self.right_panel_width)
+        each_w = max(180, int((total_w - spacing) / 2))
+        chart_x = self.window_size[0] - total_w - self.margin
+        chart_y = self.margin
+        chart_h = self.window_size[1] - 2 * self.margin
+
+        # background panel covering both charts
+        pygame.draw.rect(self.screen, (40, 40, 40), (chart_x, chart_y, total_w, chart_h))
+        # main title above the charts
+        title_surf = self.title_font.render('Damage Meter', True, (230, 230, 230))
+        self.screen.blit(title_surf, (chart_x + 8, chart_y + 6))
+
+        # gather units from board and update unit_info for alive units
+        board_units = engine.board.get_units()
+        for u in board_units:
+            self.unit_info[u.id] = {'symbol': u._get_unit_symbol(), 'team': getattr(u, 'team', None)}
+
+        # bucket units by team using persistent unit_info so dead units remain visible
+        units_by_team = {1: [], 2: []}
+        for uid, dmg in self.damage_done.items():
+            info = self.unit_info.get(uid)
+            if info is None:
+                # no metadata; skip
+                continue
+            team = info.get('team', 0)
+            units_by_team.setdefault(team, []).append((info, float(dmg)))
+
+        # render each team's chart in its own column
+        pad_left = 8
+        pad_top = self.title_font.get_height()
+        max_show = 8
+        region_h = chart_h - pad_top - 8
+
+        for idx, team in enumerate((1, 2)):
+            region_x = chart_x + idx * (each_w + spacing) + pad_left
+            region_w = each_w - pad_left - 6
+            # reserve space for the section title above bars
+            title_y = chart_y + pad_top
+            title_h = self.damage_font.get_height()
+            region_y = title_y + title_h + 6
+
+            # section title (team colored)
+            team_title = f"Team {team}"
+            title_col = self.team_colors.get(team, (200, 200, 200))
+            t_surf = self.damage_font.render(team_title, True, title_col)
+            self.screen.blit(t_surf, (region_x, title_y))
+
+            entries = units_by_team.get(team, [])
+            entries = sorted(entries, key=lambda x: x[1], reverse=True)[:max_show]
+
+            if not entries:
+                no_surf = self.damage_font.render('No data', True, (160, 160, 160))
+                self.screen.blit(no_surf, (region_x + 6, region_y + 6))
+                continue
+
+            max_damage = max((d for _, d in entries), default=1.0) or 1.0
+            # fixed bar height for consistent chart appearance - slightly taller than damage font
+            font_h = self.damage_font.get_height()
+            bar_h_fixed = max(font_h + 4, int(self.cell_radius * 0.35), 12)
+            gap = 6
+            row_h = bar_h_fixed + gap
+            for i, (info, dmg) in enumerate(entries):
+                y = region_y + i * row_h
+                bx = region_x
+                by = y + 2
+                bw = region_w
+                bh = bar_h_fixed
+                pygame.draw.rect(self.screen, (30, 30, 30), (bx, by, bw, bh))
+                fill_w = int(bw * (dmg / max_damage)) if max_damage > 0 else 0
+                color = self.team_colors.get(info.get('team', None), (200, 200, 60))
+                pygame.draw.rect(self.screen, color, (bx, by, fill_w, bh))
+                label = f"{info.get('symbol', '?')} {int(dmg)}"
+                lab_surf = self.damage_font.render(label, True, (255, 255, 255))
+                self.screen.blit(lab_surf, (bx + 4, by - 1))
+
+    def _draw_floating_texts(self, now: float):
+        remaining = []
+        for item in self.floating_texts:
+            # item: [x0, y0, txt, start, duration, vx, vy, color]
+            x0, y0, txt, start, duration, vx, vy, txt_color = item
+            elapsed = now - start
+            if elapsed <= duration:
+                # Parabolic motion: x = x0 + vx*t ; y = y0 + vy*t + 0.5*g*t^2
+                g = 300.0
+                cur_x = x0 + vx * elapsed
+                cur_y = y0 + vy * elapsed + 0.5 * g * (elapsed ** 2)
+                alpha = max(0, min(255, int(255 * (1.0 - elapsed / duration))))
+                # Render text with white outline + fill at (cur_x, cur_y)
+                outline_color = (255, 255, 255)
+                fill_color = txt_color
+                # thinner outline: fewer offset blits
+                outline_surf = self.damage_font.render(txt, True, outline_color).convert_alpha()
+                fill_surf = self.damage_font.render(txt, True, fill_color).convert_alpha()
+                # apply alpha fade
+                outline_surf.set_alpha(alpha)
+                fill_surf.set_alpha(alpha)
+                off_positions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+                for ox, oy in off_positions:
+                    orect = outline_surf.get_rect(center=(int(cur_x + ox), int(cur_y + oy)))
+                    self.screen.blit(outline_surf, orect)
+                frect = fill_surf.get_rect(center=(int(cur_x), int(cur_y)))
+                self.screen.blit(fill_surf, frect)
+                remaining.append([x0, y0, txt, start, duration, vx, vy, txt_color])
+        self.floating_texts = remaining
+
+    def _draw_cells(self, highlighted_positions: set, moving_map: dict, now: float):
+        """Draw board cells, unit circles, symbols and health/mana bars.
+
+        highlighted_positions: set of (x,y) to draw a highlighted border
+        moving_map: dict of unit.id -> (unit, ix, iy, action) to skip static drawing
+        now: current timestamp in seconds
+        """
         for x in range(self.board.width):
             for y in range(self.board.height):
                 cell = self.board.get_cell((x, y))
@@ -346,245 +481,8 @@ class PygameBoardVisualizer:
                     max_mana = getattr(unit.base_stats, 'max_mana', 0) or 1
                     mana_ratio = max(0.0, min(1.0, unit.current_mana / max_mana))
                     pygame.draw.rect(self.screen, (80, 140, 220), (hb_x, mb_y, int(bar_w * mana_ratio), bar_h))
-
-        # Draw moving units on top
-        for _uid, (unit, ix, iy, action) in moving_map.items():
-            team = getattr(unit, 'team', 0)
-            color = self.team_colors.get(team, (200, 200, 200))
-            pygame.draw.circle(self.screen, color, (ix, iy), int(self.cell_radius * 0.45))
-            symbol = unit._get_unit_symbol()
-            # Check for active spin for this unit (moving units can also spin)
-            angle = 0.0
-            for s in list(self.spin_animations):
-                uid, start, duration, speed = s
-                if uid == unit.id:
-                    elapsed = now - start
-                    if elapsed <= duration:
-                        angle = (elapsed * speed) % 360.0
-                    else:
-                        self.spin_animations.remove(s)
-            text_surf = self.font.render(symbol, True, (255, 255, 255))
-            if angle != 0.0:
-                rot = pygame.transform.rotate(text_surf, angle)
-                rrect = rot.get_rect(center=(ix, iy))
-                self.screen.blit(rot, rrect)
-            else:
-                text_rect = text_surf.get_rect(center=(ix, iy))
-                self.screen.blit(text_surf, text_rect)
-
-            bar_w = int(self.cell_radius * 1.2)
-            bar_h = max(3, int(self.cell_radius * 0.12))
-            hb_x = ix - bar_w // 2
-            hb_y = iy - int(self.cell_radius * 0.75)
-            pygame.draw.rect(self.screen, (50, 50, 50), (hb_x, hb_y, bar_w, bar_h))
-            hp_ratio = max(0.0, min(1.0, unit.current_health / unit.get_max_health()))
-            pygame.draw.rect(self.screen, (50, 200, 100), (hb_x, hb_y, int(bar_w * hp_ratio), bar_h))
-            mb_y = iy - int(self.cell_radius * 0.63)
-            pygame.draw.rect(self.screen, (50, 50, 50), (hb_x, mb_y, bar_w, bar_h))
-            max_mana = getattr(unit.base_stats, 'max_mana', 0) or 1
-            mana_ratio = max(0.0, min(1.0, unit.current_mana / max_mana))
-            pygame.draw.rect(self.screen, (80, 140, 220), (hb_x, mb_y, int(bar_w * mana_ratio), bar_h))
-            # Damage meter for moving unit
-            # (inline damage meter removed; consolidated charts to the right)
-
-        # Draw attack animations on top (lines from attacker toward target)
-        if engine is not None:
-            for action, sx, sy, tx, ty, t in attack_anims:
-                atk = action.unit
-                color = self.team_colors.get(getattr(atk, 'team', None), (220, 220, 80))
-                # line thickness fades slightly with progress
-                width = max(1, int(self.cell_radius * 0.12 * (1.0 - t) + 1))
-                pygame.draw.line(self.screen, color, (sx, sy), (tx, ty), width)
-                # projectile dot at tip
-                pygame.draw.circle(self.screen, (255, 255, 255), (int(tx), int(ty)), max(2, int(self.cell_radius * 0.08)))
-
-            # Draw spell projectiles
-            for item in spell_projectiles:
-                # item: (action, sx, sy, tx, ty, cur_x, cur_y, t, desc)
-                action, sx, sy, tx, ty, cur_x, cur_y, t, desc = item
-
-                src = action.unit
-                color = self.team_colors.get(src.team, (200, 40, 40))
-                # allow descriptor to hint color
-                if desc and isinstance(desc, dict):
-                    ch = desc.get('color_hint')
-                    if ch:
-                        color = ch
-                    glow = desc.get('glow', True)
-                else:
-                    glow = True
-
-                proj_radius = max(6, int(self.cell_radius * 0.18))
-                if glow:
-                    glow_surf = pygame.Surface((proj_radius*4, proj_radius*4), pygame.SRCALPHA)
-                    glow_alpha = max(40, int(180 * (1.0 - t)))
-                    pygame.draw.circle(glow_surf, (color[0], color[1], color[2], glow_alpha), (proj_radius*2, proj_radius*2), proj_radius*2)
-                    self.screen.blit(glow_surf, (int(cur_x - proj_radius*2), int(cur_y - proj_radius*2)))
-                # core
-                pygame.draw.circle(self.screen, color, (int(cur_x), int(cur_y)), proj_radius)
-                # white highlight
-                pygame.draw.circle(self.screen, (255, 255, 255), (int(cur_x), int(cur_y)), max(1, proj_radius//3))
-
-        # Draw floating damage texts and AoE animations, remove expired
-        now = pygame.time.get_ticks() / 1000.0
-        # AoE animations
-        aoe_remaining = []
-        for aoe in self.aoe_animations:
-            pos, radius_hex, start, duration, color = aoe
-            elapsed = now - start
-            if elapsed <= duration:
-                alpha = max(0, min(200, int(200 * (1.0 - elapsed / duration))))
-                # draw hex filled polygons for each position in l1 range
-                # Use hex-aware API to get cells in range (returns BoardCell objects)
-                cells = self.board.get_cells_in_l1_range(pos, radius_hex)
-                positions = [c.position for c in cells]
-                surf = pygame.Surface(self.window_size, pygame.SRCALPHA)
-                for p in positions:
-                    q, r = oddr_to_axial(p)
-                    px, py = hex_to_pixel(q, r, self.cell_radius)
-                    center_x = int(px + self.left_offset + self.margin)
-                    center_y = int(py + self.margin + self.cell_radius + 4)
-                    corners = hexagon_corners(center_x, center_y, self.cell_radius)
-                    int_corners = [(int(x), int(y)) for x, y in corners]
-                    pygame.draw.polygon(surf, (color[0], color[1], color[2], alpha), int_corners)
-                self.screen.blit(surf, (0, 0))
-                aoe_remaining.append(aoe)
-        self.aoe_animations = aoe_remaining
-
-        # Update and draw particles
-        particle_remaining = []
-        for p in self.particles:
-            x0, y0, vx, vy, start, lifetime, color, size = p
-            elapsed = now - start
-            if elapsed <= lifetime:
-                cur_x = x0 + vx * elapsed
-                cur_y = y0 + vy * elapsed
-                alpha = max(0, min(255, int(255 * (1.0 - elapsed / lifetime))))
-                # soft glow behind particle
-                glow_size = int(size * 2.5)
-                glow_alpha = max(0, min(220, int(alpha * 0.6)))
-                glow_surf = pygame.Surface((glow_size*2, glow_size*2), pygame.SRCALPHA)
-                pygame.draw.circle(glow_surf, (color[0], color[1], color[2], glow_alpha), (glow_size, glow_size), glow_size)
-                self.screen.blit(glow_surf, (int(cur_x - glow_size), int(cur_y - glow_size)))
-                # bright core
-                core_surf = pygame.Surface((size*2, size*2), pygame.SRCALPHA)
-                core_alpha = alpha
-                pygame.draw.circle(core_surf, (255, 255, 255, core_alpha), (size, size), size)
-                self.screen.blit(core_surf, (int(cur_x - size), int(cur_y - size)))
-                particle_remaining.append(p)
-        self.particles = particle_remaining
-
-        # Draw two damage charts (one per team) side-by-side to the right of the board
-        if engine is not None and self.damage_done:
-            # Use the reserved right panel width for charts so the damage meter is larger
-            spacing = 12
-            total_w = int(self.right_panel_width)
-            each_w = max(180, int((total_w - spacing) / 2))
-            chart_x = self.window_size[0] - total_w - self.margin
-            chart_y = self.margin
-            chart_h = self.window_size[1] - 2 * self.margin
-
-            # background panel covering both charts
-            pygame.draw.rect(self.screen, (40, 40, 40), (chart_x, chart_y, total_w, chart_h))
-            # main title above the charts
-            title_surf = self.title_font.render('Damage Meter', True, (230, 230, 230))
-            self.screen.blit(title_surf, (chart_x + 8, chart_y + 6))
-
-            # gather units from board and update unit_info for alive units
-            board_units = engine.board.get_units()
-
-
-            for u in board_units:
-                self.unit_info[u.id] = {'symbol': u._get_unit_symbol(), 'team': getattr(u, 'team', None)}
-
-            # bucket units by team using persistent unit_info so dead units remain visible
-            units_by_team = {1: [], 2: []}
-            for uid, dmg in self.damage_done.items():
-                info = self.unit_info.get(uid)
-                if info is None:
-                    # no metadata; skip
-                    continue
-                team = info.get('team', 0)
-                units_by_team.setdefault(team, []).append((info, float(dmg)))
-
-            # render each team's chart in its own column
-            pad_left = 8
-            pad_top = self.title_font.get_height()
-            max_show = 8
-            region_h = chart_h - pad_top - 8
-
-            for idx, team in enumerate((1, 2)):
-                region_x = chart_x + idx * (each_w + spacing) + pad_left
-                region_w = each_w - pad_left - 6
-                # reserve space for the section title above bars
-                title_y = chart_y + pad_top
-                title_h = self.damage_font.get_height()
-                region_y = title_y + title_h + 6
-
-                # section title (team colored)
-                team_title = f"Team {team}"
-                title_col = self.team_colors.get(team, (200, 200, 200))
-                t_surf = self.damage_font.render(team_title, True, title_col)
-                self.screen.blit(t_surf, (region_x, title_y))
-
-                entries = units_by_team.get(team, [])
-                entries = sorted(entries, key=lambda x: x[1], reverse=True)[:max_show]
-
-                if not entries:
-                    no_surf = self.damage_font.render('No data', True, (160, 160, 160))
-                    self.screen.blit(no_surf, (region_x + 6, region_y + 6))
-                    continue
-
-                max_damage = max((d for _, d in entries), default=1.0) or 1.0
-                # fixed bar height for consistent chart appearance - slightly taller than damage font
-                font_h = self.damage_font.get_height()
-                bar_h_fixed = max(font_h + 4, int(self.cell_radius * 0.35), 12)
-                gap = 6
-                row_h = bar_h_fixed + gap
-                for i, (info, dmg) in enumerate(entries):
-                    y = region_y + i * row_h
-                    bx = region_x
-                    by = y + 2
-                    bw = region_w
-                    bh = bar_h_fixed
-                    pygame.draw.rect(self.screen, (30, 30, 30), (bx, by, bw, bh))
-                    fill_w = int(bw * (dmg / max_damage)) if max_damage > 0 else 0
-                    color = self.team_colors.get(info.get('team', None), (200, 200, 60))
-                    pygame.draw.rect(self.screen, color, (bx, by, fill_w, bh))
-                    label = f"{info.get('symbol', '?')} {int(dmg)}"
-                    lab_surf = self.damage_font.render(label, True, (255, 255, 255))
-                    self.screen.blit(lab_surf, (bx + 4, by - 1))
-
-        remaining = []
-        for item in self.floating_texts:
-            # item: [x0, y0, txt, start, duration, vx, vy, color]
-            x0, y0, txt, start, duration, vx, vy, txt_color = item
-            elapsed = now - start
-            if elapsed <= duration:
-                # Parabolic motion: x = x0 + vx*t ; y = y0 + vy*t + 0.5*g*t^2
-                g = 300.0
-                cur_x = x0 + vx * elapsed
-                cur_y = y0 + vy * elapsed + 0.5 * g * (elapsed ** 2)
-                alpha = max(0, min(255, int(255 * (1.0 - elapsed / duration))))
-                # Render text with white outline + fill at (cur_x, cur_y)
-                outline_color = (255, 255, 255)
-                fill_color = txt_color
-                # thinner outline: fewer offset blits
-                outline_surf = self.damage_font.render(txt, True, outline_color).convert_alpha()
-                fill_surf = self.damage_font.render(txt, True, fill_color).convert_alpha()
-                # apply alpha fade
-                outline_surf.set_alpha(alpha)
-                fill_surf.set_alpha(alpha)
-                off_positions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-                for ox, oy in off_positions:
-                    orect = outline_surf.get_rect(center=(int(cur_x + ox), int(cur_y + oy)))
-                    self.screen.blit(outline_surf, orect)
-                frect = fill_surf.get_rect(center=(int(cur_x), int(cur_y)))
-                self.screen.blit(fill_surf, frect)
-                remaining.append([x0, y0, txt, start, duration, vx, vy, txt_color])
-        self.floating_texts = remaining
-
-        # Hover tooltip: show spell description when hovering a unit
+    def _draw_hover_tooltip(self):
+        """Show tooltip for unit under mouse, if any."""
         mx, my = pygame.mouse.get_pos()
         closest = None
         closest_d = float('inf')
@@ -610,200 +508,201 @@ class PygameBoardVisualizer:
             if closest_d <= (self.cell_radius * 0.9) ** 2 and cell is not None and getattr(cell, 'unit', None) is not None:
                 hovered_unit = cell.unit
 
-        if hovered_unit is not None:
-            # Build tooltip contents: unit name (title), spell name, description, and unit health/mana
-            spell = getattr(hovered_unit.base_stats, 'spell', None)
-            title = hovered_unit.unit_type.value
-            title = title[0].upper() + title[1:]  # Capitalize first letter
-            spell_name = spell.name if spell is not None else 'No Spell'
+        if hovered_unit is None:
+            return
 
-            # Ensure first letter is capitalized (preserve the rest)
-            if spell_name:
-                spell_name = spell_name[0].upper() + spell_name[1:]
-            desc = spell.description() if spell is not None else "No description available."
+        # Build tooltip contents: unit name (title), spell name, description, and unit health/mana
+        spell = getattr(hovered_unit.base_stats, 'spell', None)
+        title = hovered_unit.unit_type.value
+        title = title[0].upper() + title[1:]  # Capitalize first letter
+        spell_name = spell.name if spell is not None else 'No Spell'
 
-            # Numeric health/mana
-            cur_hp = int(max(0, hovered_unit.current_health))
-            max_hp = int(hovered_unit.get_max_health())
-            cur_mana = int(max(0, hovered_unit.current_mana))
-            max_mana = int(getattr(hovered_unit.base_stats, 'max_mana', 0) or 0)
+        # Ensure first letter is capitalized (preserve the rest)
+        if spell_name:
+            spell_name = spell_name[0].upper() + spell_name[1:]
+        desc = spell.description() if spell is not None else "No description available."
 
-            # Wrap description to multiple lines using tooltip font
-            max_width = self.tooltip_max_width
-            words = desc.split()
-            cur = ''
-            desc_lines = []
-            for w in words:
-                test = (cur + ' ' + w).strip()
-                surf = self.tooltip_font.render(test, True, (255, 255, 255))
-                if surf.get_width() > max_width and cur:
-                    desc_lines.append(cur)
-                    cur = w
-                else:
-                    cur = test
-            if cur:
+        # Numeric health/mana
+        cur_hp = int(max(0, hovered_unit.current_health))
+        max_hp = int(hovered_unit.get_max_health())
+        cur_mana = int(max(0, hovered_unit.current_mana))
+        max_mana = int(getattr(hovered_unit.base_stats, 'max_mana', 0) or 0)
+
+        # Wrap description to multiple lines using tooltip font
+        max_width = self.tooltip_max_width
+        words = desc.split()
+        cur = ''
+        desc_lines = []
+        for w in words:
+            test = (cur + ' ' + w).strip()
+            surf = self.tooltip_font.render(test, True, (255, 255, 255))
+            if surf.get_width() > max_width and cur:
                 desc_lines.append(cur)
+                cur = w
+            else:
+                cur = test
+        if cur:
+            desc_lines.append(cur)
 
-            # Render tooltip box slightly offset from mouse so it doesn't sit under cursor
-            pad = self.cell_radius // 2
-            title_surf = self.tooltip_font.render(title, True, (250, 250, 210))
-            desc_surfs = [self.tooltip_font.render(l, True, (230, 230, 230)) for l in desc_lines]
-            # numeric text for hp/mana
-            nm_font = self.tooltip_font
-            hp_text = f"HP: {cur_hp}/{max_hp}"
-            mana_text = f"Mana: {cur_mana}/{max_mana}" if max_mana > 0 else "Mana: 0/0"
-            hp_surf = nm_font.render(hp_text, True, (230, 230, 230))
-            mana_surf = nm_font.render(mana_text, True, (230, 230, 230))
-            # spell name surface (render below bars)
-            spell_surf = self.tooltip_font.render(spell_name, True, (200, 200, 255))
+        # Render tooltip box slightly offset from mouse so it doesn't sit under cursor
+        pad = self.cell_radius // 2
+        title_surf = self.tooltip_font.render(title, True, (250, 250, 210))
+        desc_surfs = [self.tooltip_font.render(l, True, (230, 230, 230)) for l in desc_lines]
+        # numeric text for hp/mana
+        nm_font = self.tooltip_font
+        hp_text = f"HP: {cur_hp}/{max_hp}"
+        mana_text = f"Mana: {cur_mana}/{max_mana}" if max_mana > 0 else "Mana: 0/0"
+        hp_surf = nm_font.render(hp_text, True, (230, 230, 230))
+        mana_surf = nm_font.render(mana_text, True, (230, 230, 230))
+        # spell name surface (render below bars)
+        spell_surf = self.tooltip_font.render(spell_name, True, (200, 200, 255))
 
-            # Determine box width and height; include space for two small bars and spell name
-            bar_w = min(200, max_width)
-            bar_h = max(6, int(self.cell_radius * 0.18))
+        # Determine box width and height; include space for two small bars and spell name
+        bar_w = min(200, max_width)
+        bar_h = max(6, int(self.cell_radius * 0.18))
 
-            # Prepare stats block (three columns) and include its size when computing tooltip dimensions
-            bs = hovered_unit.base_stats
-            stats = [
-                ("ATK", str(int(hovered_unit.get_attack()))),
-                ("AS", f"{hovered_unit.get_attack_speed():.2f}"),
-                ("SP", f"{getattr(bs, 'spell_power', 0):.0f}"),
-                ("RNG", str(int(getattr(bs, 'range', 1)))),
-                ("DEF", str(int(hovered_unit.get_defense()))),
-                ("RES", str(int(hovered_unit.get_resistance()))),
-                ("CR", f"{getattr(bs, 'crit_rate', 0.0)*100:.0f}%"),
-                ("CD", f"{getattr(bs, 'crit_dmg', 1.0):.1f}x"),
+        # Prepare stats block (three columns) and include its size when computing tooltip dimensions
+        bs = hovered_unit.base_stats
+        stats = [
+            ("ATK", str(int(hovered_unit.get_attack()))),
+            ("AS", f"{hovered_unit.get_attack_speed():.2f}"),
+            ("SP", f"{getattr(bs, 'spell_power', 0):.0f}"),
+            ("RNG", str(int(getattr(bs, 'range', 1)))),
+            ("DEF", str(int(hovered_unit.get_defense()))),
+            ("RES", str(int(hovered_unit.get_resistance()))),
+            ("CR", f"{getattr(bs, 'crit_rate', 0.0)*100:.0f}%"),
+            ("CD", f"{getattr(bs, 'crit_dmg', 1.0):.1f}x"),
+        ]
+        stat_font = self.tooltip_font
+        # Split into four roughly-equal columns
+        n = len(stats)
+        per_col = (n + 3) // 4
+        left_stats = stats[:per_col]
+        midleft_stats = stats[per_col:per_col * 2]
+        midright_stats = stats[per_col * 2:per_col * 3]
+        right_stats = stats[per_col * 3:]
 
-            ]
-            stat_font = self.tooltip_font
-            # Split into four roughly-equal columns
-            n = len(stats)
-            per_col = (n + 3) // 4
-            left_stats = stats[:per_col]
-            midleft_stats = stats[per_col:per_col * 2]
-            midright_stats = stats[per_col * 2:per_col * 3]
-            right_stats = stats[per_col * 3:]
+        left_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in left_stats]
+        midleft_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midleft_stats]
+        midright_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midright_stats]
+        right_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in right_stats]
 
-            left_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in left_stats]
-            midleft_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midleft_stats]
-            midright_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midright_stats]
-            right_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in right_stats]
+        left_w = max((s.get_width() for s in left_surfs), default=0)
+        midleft_w = max((s.get_width() for s in midleft_surfs), default=0)
+        midright_w = max((s.get_width() for s in midright_surfs), default=0)
+        right_w = max((s.get_width() for s in right_surfs), default=0)
+        gap_cols = 10
+        stats_block_w = left_w + (midleft_w and gap_cols + midleft_w or 0) + (midright_w and gap_cols + midright_w or 0) + (right_w and gap_cols + right_w or 0)
+        # height of stats block is the max column height
+        left_h = sum(s.get_height() + 2 for s in left_surfs)
+        midleft_h = sum(s.get_height() + 2 for s in midleft_surfs)
+        midright_h = sum(s.get_height() + 2 for s in midright_surfs)
+        right_h = sum(s.get_height() + 2 for s in right_surfs)
+        stats_block_h = max(left_h, midleft_h, midright_h, right_h)
 
-            left_w = max((s.get_width() for s in left_surfs), default=0)
-            midleft_w = max((s.get_width() for s in midleft_surfs), default=0)
-            midright_w = max((s.get_width() for s in midright_surfs), default=0)
-            right_w = max((s.get_width() for s in right_surfs), default=0)
-            gap_cols = 10
-            stats_block_w = left_w + (midleft_w and gap_cols + midleft_w or 0) + (midright_w and gap_cols + midright_w or 0) + (right_w and gap_cols + right_w or 0)
-            # height of stats block is the max column height
-            left_h = sum(s.get_height() + 2 for s in left_surfs)
-            midleft_h = sum(s.get_height() + 2 for s in midleft_surfs)
-            midright_h = sum(s.get_height() + 2 for s in midright_surfs)
-            right_h = sum(s.get_height() + 2 for s in right_surfs)
-            stats_block_h = max(left_h, midleft_h, midright_h, right_h)
+        content_w = max(title_surf.get_width(), spell_surf.get_width(), hp_surf.get_width() + bar_w + 8, mana_surf.get_width() + bar_w + 8,
+                        *(s.get_width() for s in desc_surfs), stats_block_w)
+        box_w = content_w + pad * 2
+        # compute height: title + gap + (bar_h + text) for hp + gap + (bar_h + text) for mana + gap + stats block + gap + spell name + gap + desc lines
+        spacing = 6
+        box_h = (pad + title_surf.get_height() + spacing + max(bar_h, hp_surf.get_height()) + spacing +
+                    max(bar_h, mana_surf.get_height()) + spacing + stats_block_h + spacing + spell_surf.get_height() + spacing + sum(s.get_height() + 4 for s in desc_surfs) + pad)
+        bx = mx + 16
+        by = my + 16
+        # clamp to window bounds
+        if bx + box_w > self.window_size[0] - 4:
+            bx = mx - box_w - 16
+        if by + box_h > self.window_size[1] - 4:
+            by = my - box_h - 16
 
-            content_w = max(title_surf.get_width(), spell_surf.get_width(), hp_surf.get_width() + bar_w + 8, mana_surf.get_width() + bar_w + 8,
-                            *(s.get_width() for s in desc_surfs), stats_block_w)
-            box_w = content_w + pad * 2
-            # compute height: title + gap + (bar_h + text) for hp + gap + (bar_h + text) for mana + gap + stats block + gap + spell name + gap + desc lines
-            spacing = 6
-            box_h = (pad + title_surf.get_height() + spacing + max(bar_h, hp_surf.get_height()) + spacing +
-                        max(bar_h, mana_surf.get_height()) + spacing + stats_block_h + spacing + spell_surf.get_height() + spacing + sum(s.get_height() + 4 for s in desc_surfs) + pad)
-            bx = mx + 16
-            by = my + 16
-            # clamp to window bounds
-            if bx + box_w > self.window_size[0] - 4:
-                bx = mx - box_w - 16
-            if by + box_h > self.window_size[1] - 4:
-                by = my - box_h - 16
+        # background
+        tooltip_surf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+        pygame.draw.rect(tooltip_surf, (20, 20, 20, 220), (0, 0, box_w, box_h), border_radius=6)
+        # border
+        pygame.draw.rect(tooltip_surf, (140, 140, 140, 200), (0, 0, box_w, box_h), 1, border_radius=6)
 
-            # background
-            tooltip_surf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
-            pygame.draw.rect(tooltip_surf, (20, 20, 20, 220), (0, 0, box_w, box_h), border_radius=6)
-            # border
-            pygame.draw.rect(tooltip_surf, (140, 140, 140, 200), (0, 0, box_w, box_h), 1, border_radius=6)
+        yoff = pad
+        # title
+        tooltip_surf.blit(title_surf, (pad, yoff))
+        yoff += title_surf.get_height() + spacing
 
-            yoff = pad
-            # title
-            tooltip_surf.blit(title_surf, (pad, yoff))
-            yoff += title_surf.get_height() + spacing
+        # HP bar + numeric
+        bar_x = pad
+        bar_y = yoff + max(0, (max(0, bar_h - hp_surf.get_height()) // 2))
+        # draw bar background
+        pygame.draw.rect(tooltip_surf, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
+        hp_ratio = max(0.0, min(1.0, hovered_unit.current_health / float(max(1, hovered_unit.get_max_health()))))
+        pygame.draw.rect(tooltip_surf, (50, 200, 100), (bar_x, bar_y, int(bar_w * hp_ratio), bar_h))
+        # numeric on the right of bar
+        tooltip_surf.blit(hp_surf, (bar_x + bar_w + 8, yoff - hp_surf.get_height()//2))
+        yoff += max(bar_h, hp_surf.get_height()) + spacing
 
-            # HP bar + numeric
-            bar_x = pad
-            bar_y = yoff + max(0, (max(0, bar_h - hp_surf.get_height()) // 2))
-            # draw bar background
-            pygame.draw.rect(tooltip_surf, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
-            hp_ratio = max(0.0, min(1.0, hovered_unit.current_health / float(max(1, hovered_unit.get_max_health()))))
-            pygame.draw.rect(tooltip_surf, (50, 200, 100), (bar_x, bar_y, int(bar_w * hp_ratio), bar_h))
-            # numeric on the right of bar
-            tooltip_surf.blit(hp_surf, (bar_x + bar_w + 8, yoff - hp_surf.get_height()//2))
-            yoff += max(bar_h, hp_surf.get_height()) + spacing
-
-            # Mana bar + numeric
-            bar_x = pad
-            bar_y = yoff + max(0, (max(0, bar_h - mana_surf.get_height()) // 3))
-            pygame.draw.rect(tooltip_surf, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
-            mana_ratio = 0.0
-            if max_mana > 0:
-                mana_ratio = max(0.0, min(1.0, hovered_unit.current_mana / float(max_mana)))
-            pygame.draw.rect(tooltip_surf, (80, 140, 220), (bar_x, bar_y, int(bar_w * mana_ratio), bar_h))
-            tooltip_surf.blit(mana_surf, (bar_x + bar_w + 8, yoff - mana_surf.get_height()//3))
-            yoff += max(bar_h, mana_surf.get_height()) + spacing
-
-
-            # Render surfaces for each stat column
-            stat_font = self.tooltip_font
-            left_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in left_stats]
-            midleft_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midleft_stats]
-            midright_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midright_stats]
-            right_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in right_stats]
-
-            # Compute widths
-            left_w = max((s.get_width() for s in left_surfs), default=0)
-            midleft_w = max((s.get_width() for s in midleft_surfs), default=0)
-            midright_w = max((s.get_width() for s in midright_surfs), default=0)
-            right_w = max((s.get_width() for s in right_surfs), default=0)
-            gap_cols = 12
-            stats_block_w = left_w + (midleft_w and gap_cols + midleft_w or 0) + (midright_w and gap_cols + midright_w or 0) + (right_w and gap_cols + right_w or 0)
-
-            # Ensure tooltip width accommodates stats block
-            content_w = max(content_w, stats_block_w + pad * 2)
-            box_w = content_w + pad * 2
-
-            # Draw stat lines (three columns)
-            col_x = pad
-            # left column
-            for i, s in enumerate(left_surfs):
-                tooltip_surf.blit(s, (col_x, yoff + i * (s.get_height() + 2)))
-            # middle columns
-            if midleft_surfs:
-                midleft_x = pad + left_w + gap_cols
-                for i, s in enumerate(midleft_surfs):
-                    tooltip_surf.blit(s, (midleft_x, yoff + i * (s.get_height() + 2)))
-            if midright_surfs:
-                midright_x = pad + left_w + gap_cols + midleft_w + gap_cols
-                for i, s in enumerate(midright_surfs):
-                    tooltip_surf.blit(s, (midright_x, yoff + i * (s.get_height() + 2)))
-            # right column
-            if right_surfs:
-                right_x = pad + left_w + gap_cols + midleft_w + gap_cols + midright_w + gap_cols
-                for i, s in enumerate(right_surfs):
-                    tooltip_surf.blit(s, (right_x, yoff + i * (s.get_height() + 2)))
-
-            # advance yoff by the stats block height
-            yoff += stats_block_h + spacing
-
-            # Spell name (below bars)
-            spell_surf = self.tooltip_font.render(spell_name, True, (200, 200, 255))
-            tooltip_surf.blit(spell_surf, (pad, yoff))
-            yoff += spell_surf.get_height() + spacing
+        # Mana bar + numeric
+        bar_x = pad
+        bar_y = yoff + max(0, (max(0, bar_h - mana_surf.get_height()) // 3))
+        pygame.draw.rect(tooltip_surf, (40, 40, 40), (bar_x, bar_y, bar_w, bar_h))
+        mana_ratio = 0.0
+        if max_mana > 0:
+            mana_ratio = max(0.0, min(1.0, hovered_unit.current_mana / float(max_mana)))
+        pygame.draw.rect(tooltip_surf, (80, 140, 220), (bar_x, bar_y, int(bar_w * mana_ratio), bar_h))
+        tooltip_surf.blit(mana_surf, (bar_x + bar_w + 8, yoff - mana_surf.get_height()//3))
+        yoff += max(bar_h, mana_surf.get_height()) + spacing
 
 
-            # description lines
-            for s in desc_surfs:
-                tooltip_surf.blit(s, (pad, yoff))
-                yoff += s.get_height() + 4
+        # Render surfaces for each stat column
+        stat_font = self.tooltip_font
+        left_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in left_stats]
+        midleft_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midleft_stats]
+        midright_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in midright_stats]
+        right_surfs = [stat_font.render(f"{k}: {v}", True, (220, 220, 220)) for k, v in right_stats]
 
-            self.screen.blit(tooltip_surf, (bx, by))
+        # Compute widths
+        left_w = max((s.get_width() for s in left_surfs), default=0)
+        midleft_w = max((s.get_width() for s in midleft_surfs), default=0)
+        midright_w = max((s.get_width() for s in midright_surfs), default=0)
+        right_w = max((s.get_width() for s in right_surfs), default=0)
+        gap_cols = 12
+        stats_block_w = left_w + (midleft_w and gap_cols + midleft_w or 0) + (midright_w and gap_cols + midright_w or 0) + (right_w and gap_cols + right_w or 0)
+
+        # Ensure tooltip width accommodates stats block
+        content_w = max(content_w, stats_block_w + pad * 2)
+        box_w = content_w + pad * 2
+
+        # Draw stat lines (three columns)
+        col_x = pad
+        # left column
+        for i, s in enumerate(left_surfs):
+            tooltip_surf.blit(s, (col_x, yoff + i * (s.get_height() + 2)))
+        # middle columns
+        if midleft_surfs:
+            midleft_x = pad + left_w + gap_cols
+            for i, s in enumerate(midleft_surfs):
+                tooltip_surf.blit(s, (midleft_x, yoff + i * (s.get_height() + 2)))
+        if midright_surfs:
+            midright_x = pad + left_w + gap_cols + midleft_w + gap_cols
+            for i, s in enumerate(midright_surfs):
+                tooltip_surf.blit(s, (midright_x, yoff + i * (s.get_height() + 2)))
+        # right column
+        if right_surfs:
+            right_x = pad + left_w + gap_cols + midleft_w + gap_cols + midright_w + gap_cols
+            for i, s in enumerate(right_surfs):
+                tooltip_surf.blit(s, (right_x, yoff + i * (s.get_height() + 2)))
+
+        # advance yoff by the stats block height
+        yoff += stats_block_h + spacing
+
+        # Spell name (below bars)
+        spell_surf = self.tooltip_font.render(spell_name, True, (200, 200, 255))
+        tooltip_surf.blit(spell_surf, (pad, yoff))
+        yoff += spell_surf.get_height() + spacing
+
+
+        # description lines
+        for s in desc_surfs:
+            tooltip_surf.blit(s, (pad, yoff))
+            yoff += s.get_height() + 4
+
+        self.screen.blit(tooltip_surf, (bx, by))
             
     def present(self):
         pygame.display.flip()
@@ -1081,6 +980,146 @@ class PygameBoardVisualizer:
         cur_x = cx1 + (cx2 - cx1) * t
         cur_y = cy1 + (cy2 - cy1) * t
         spell_projectiles.append((action, cx1, cy1, cx2, cy2, cur_x, cur_y, t))
+
+    def _collect_cast_spell_animation(self, action, sim_frame: int, sim_progress: float, spell_projectiles: list):
+        """Generic CAST_SPELL visual helper: query spell instance for projectile descriptor and append projectile tuple."""
+        desc = None
+        if getattr(action, 'spell_instance', None) is not None:
+            try:
+                desc = action.spell_instance.projectile_render_callback(action.unit, self.board)
+            except Exception:
+                desc = None
+
+        if action.start_position is None:
+            return
+        if getattr(action, 'resolution_frame', 0) <= sim_frame:
+            return
+
+        start_f = action.planned_frame
+        end_f = action.resolution_frame
+        denom = max(1, end_f - start_f)
+        t = (sim_frame + sim_progress - start_f) / denom
+        t = max(0.0, min(1.0, t))
+
+        q1, r1 = oddr_to_axial(action.start_position)
+        x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
+        cx1 = x1 + self.left_offset + self.margin
+        cy1 = y1 + self.margin + self.cell_radius + 4
+
+        target_pos = None
+        if getattr(action, 'target', None) and getattr(action.target, 'position', None):
+            target_pos = action.target.position
+        elif getattr(action, 'target_position', None):
+            target_pos = action.target_position
+
+        if target_pos is None:
+            return
+
+        q2, r2 = oddr_to_axial(target_pos)
+        x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
+        cx2 = x2 + self.left_offset + self.margin
+        cy2 = y2 + self.margin + self.cell_radius + 4
+
+        cur_x = cx1 + (cx2 - cx1) * t
+        cur_y = cy1 + (cy2 - cy1) * t
+        # include descriptor as last element (may be None)
+        spell_projectiles.append((action, cx1, cy1, cx2, cy2, cur_x, cur_y, t, desc))
+
+    def _handle_spell_planning(self, ev, now: float):
+        """Start spin animation for a planned spell event."""
+        source = getattr(ev, 'source', None)
+        if source is None or getattr(source, 'id', None) is None:
+            return
+        spin_duration = 0.6
+        spin_speed = 360.0 / spin_duration
+        self.spin_animations.append([source.id, now, spin_duration, spin_speed])
+        self._seen_events.add(id(ev))
+
+    def _handle_spell_execution(self, ev, now: float):
+        """Handle spell execution event by asking spell for on-hit render descriptor."""
+        if id(ev) in self._seen_events:
+            return
+        spell_inst = getattr(ev, 'spell_instance', None)
+        if spell_inst is None and getattr(ev, 'spell_name', None):
+            spell_inst = spells.get_spell_instance_by_name(ev.spell_name)
+        if spell_inst is None:
+            return
+        try:
+            desc = spell_inst.on_hit_render_callback(getattr(ev, 'source', None), self.board)
+        except Exception:
+            desc = None
+        pos = getattr(ev, 'position', None)
+        if pos is None and getattr(ev, 'target', None) and getattr(ev.target, 'position', None):
+            pos = ev.target.position
+        if desc is None or pos is None:
+            return
+        if desc.get('type') == 'aoe':
+            radius_hex = desc.get('radius_hex', 1)
+            duration = desc.get('duration', 0.6)
+            team = getattr(ev, 'source', None) and getattr(ev.source, 'team', None)
+            color = self.team_colors.get(team, desc.get('color_hint', (200, 40, 40)))
+            self.aoe_animations.append([pos, radius_hex, now, duration, color])
+            self._seen_events.add(id(ev))
+        elif desc.get('type') == 'particles':
+            src = getattr(ev, 'source', None)
+            if src is None or getattr(src, 'position', None) is None:
+                return
+            q, r = oddr_to_axial(src.position)
+            px, py = hex_to_pixel(q, r, self.cell_radius)
+            cx = int(px + self.left_offset + self.margin)
+            cy = int(py + self.margin + self.cell_radius + 4)
+            base_color = desc.get('base_color_hint') or self.team_colors.get(getattr(src, 'team', None), (200, 200, 50))
+            num_particles = desc.get('num', 20)
+            lifetime_range = desc.get('lifetime_range', (0.5, 1.2))
+            size_range = desc.get('size_range', (3, 6))
+            speed_mult_range = desc.get('speed_mult_range', (0.6, 1.6))
+            for i in range(num_particles):
+                ang = (2 * math.pi * i / num_particles) + random.uniform(-0.4, 0.4)
+                speed = random.uniform(self.cell_radius * speed_mult_range[0], self.cell_radius * speed_mult_range[1])
+                vx = math.cos(ang) * speed
+                vy = math.sin(ang) * speed
+                lifetime = random.uniform(lifetime_range[0], lifetime_range[1])
+                size = random.randint(size_range[0], size_range[1])
+                color = (min(255, int(base_color[0] * random.uniform(0.9, 1.4))),
+                         min(255, int(base_color[1] * random.uniform(0.9, 1.4))),
+                         min(255, int(base_color[2] * random.uniform(0.9, 1.4))))
+                self.particles.append([cx, cy, vx, vy, now, lifetime, color, size])
+            self._seen_events.add(id(ev))
+
+    def _handle_damage_event(self, ev, now: float):
+        """Create floating damage/heal text and account damage for charts."""
+        if id(ev) in self._seen_events:
+            return
+        pos = getattr(ev, 'position', None)
+        if pos is None and getattr(ev, 'target', None) and getattr(ev.target, 'position', None):
+            pos = ev.target.position
+        src = getattr(ev, 'source', None)
+        if src is not None and getattr(src, 'id', None) is not None:
+            self.damage_done[src.id] += float(ev.damage)
+            self.unit_info[src.id] = {'symbol': src._get_unit_symbol(), 'team': getattr(src, 'team', None)}
+        if pos is None:
+            return
+        q, r = oddr_to_axial(pos)
+        px, py = hex_to_pixel(q, r, self.cell_radius)
+        cx = int(px + self.left_offset + self.margin)
+        cy = int(py + self.margin + self.cell_radius + 4)
+        txt = str(int(ev.damage)) + ("*" if getattr(ev, 'crit_bool', False) else "")
+        x0 = cx
+        y0 = cy - int(self.cell_radius * 0.8)
+        duration = 0.5
+        spread = math.pi / 3
+        gap = math.pi / 8
+        while True:
+            offset = random.uniform(-spread, spread)
+            if abs(offset) >= gap:
+                break
+        theta = -math.pi / 2 + offset
+        speed = self.cell_radius * random.uniform(1.2, 1.6)
+        vx = math.cos(theta) * speed
+        vy = math.sin(theta) * speed
+        txt_color = (50, 200, 100) if getattr(ev, 'event_type', None) == CombatEventType.HEALING_DONE else (255, 140, 0)
+        self.floating_texts.append([x0, y0, txt, now, duration, vx, vy, txt_color])
+        self._seen_events.add(id(ev))
 
 
     def get_cell_center(self, position: Tuple[int, int]) -> Tuple[int, int]:

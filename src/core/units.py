@@ -129,7 +129,10 @@ class Unit:
 
     def get_sell_value(self) -> int:
         """Get unit sell value."""
-        return self.rarity.value if self.level == 1 else self.get_cost()-1
+        if self.rarity.value == 1:
+            return self.get_cost()
+        else:
+            return self.rarity.value if self.level == 1 else self.get_cost()-1
     
     def is_alive(self) -> bool:
         """Check if unit is alive."""

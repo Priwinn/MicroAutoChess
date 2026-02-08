@@ -64,7 +64,7 @@ class CombatEngine:
         self.board = board
         self.combat_log: List[CombatEvent] = global_log.combat_log
         self.frame_number = 0
-        self.max_frames = 500  # Prevent infinite combat
+        self.max_frames = 2000  # Prevent infinite combat
         
         # Action timing configuration
         self.action_timing = action_timing or ActionTiming()

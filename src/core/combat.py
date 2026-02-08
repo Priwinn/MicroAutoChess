@@ -315,7 +315,7 @@ class CombatEngine:
         distance = self.board.l2_distance(unit.position, target.position)
 
         # If the unit has a ranged spell and enough mana, it can cast it if the target is within spell range
-        if unit.current_mana >= unit.base_stats.max_mana and unit.base_stats.spell.ranged and float_less_than_or_equal(distance, unit.base_stats.spell.range):
+        if unit.current_mana >= unit.base_stats.max_mana and unit.base_stats.spell.ranged and float_less_than_or_equal(distance, unit.base_stats.spell.range): #probably need to add 0.66 here too?
             # If the unit has enough mana and a ranged spell, it can cast it
             # Plan spell cast
             valid_prepare = unit.base_stats.spell.prepare(unit, self.board)
@@ -501,7 +501,10 @@ class CombatEngine:
         min_distance = float('inf')
         best_count = 1 # This should be unecessary, but just in case.
 
-        for enemy in enemies:
+        #TODO: optimize this discarding enemies that are definitely too far away. Can we reuse previous pathfinding results?
+        # Sort enemies by l2 distance and only check closest ones first
+        enemies.sort(key=lambda e: self.board.l2_distance(unit.position, e.position))
+        for enemy in enemies[:3]:  # Only consider the 3 closest enemies by l2 distance for efficiency
             if not enemy.position:
                 continue
             
@@ -524,6 +527,33 @@ class CombatEngine:
                     best_count += 1
                 elif float_less_than_or_equal(l2_distance_new, l2_distance_current):
                     closest_enemy = enemy
+        #If no path is found to any enemy within the closest 3 by l2 distance, check all
+        if closest_enemy is None:
+            for enemy in enemies[3:]:
+                if not enemy.position:
+                    continue
+                
+                distance = self.board.pathfind_distance_to_range(unit.position, enemy.position, unit.base_stats.range)
+                if distance == float('inf'):
+                    continue
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_enemy = enemy
+                    best_count = 1
+
+                #If there are ties, use l2 distance to break them
+                elif distance == min_distance:
+                    l2_distance_current = self.board.l2_distance(unit.position, closest_enemy.position)
+                    l2_distance_new = self.board.l2_distance(unit.position, enemy.position)
+                    # If the l2 distance is the same, randomly select one of the closest enemies, scaling by the count ensures that each member of the tie can be selected with equal probability
+                    if math.isclose(l2_distance_new, l2_distance_current):
+                        if self.rng.random() < 1/best_count:
+                            closest_enemy = enemy
+                        best_count += 1
+                    elif float_less_than_or_equal(l2_distance_new, l2_distance_current):
+                        closest_enemy = enemy
+
+
 
 
         unit.current_target = closest_enemy  # Set current target for the unit

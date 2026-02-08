@@ -629,4 +629,6 @@ def display_win_screen(visual: 'PygameBoardVisualizer', duration: float = 600.0)
 
 
 if __name__ == '__main__':
+    import cProfile
+    # cProfile.run('main()', sort='cumtime')
     main()

@@ -173,7 +173,9 @@ class Board:
     def pathfind_distance_to_range(self, start: Tuple[int, int], target: Tuple[int, int], attack_range: int) -> float:
         """Calculate pathfinding distance to get within attack range of target."""
         target_positions = self.get_positions_in_l2_range(target, attack_range)
-        target_positions = [pos for pos in target_positions if self.get_cell(pos).is_empty() or pos == start]
+        if start in target_positions:
+            return 0.0
+        target_positions = [pos for pos in target_positions if self.get_cell(pos).is_empty()]
         min_distance = float('inf')
         for pos in target_positions:
             distance = self.pathfind_distance(start, pos)
@@ -228,6 +230,22 @@ class Board:
                     positions_in_range.append((x, y))
         
         return positions_in_range
+    
+    def get_positions_at_l2_distance(self, position: Tuple[int, int], l2_distance: float) -> List[Tuple[int, int]]:
+        """Get all positions exactly at a certain Euclidean distance from a position."""
+        positions_at_distance = []
+        x0, y0 = position
+        min_x = max(0, int(x0 - l2_distance))
+        max_x = min(self.width - 1, int(x0 + l2_distance))
+        min_y = max(0, int(y0 - l2_distance))
+        max_y = min(self.height - 1, int(y0 + l2_distance))
+        
+        for x in range(min_x, max_x + 1):
+            for y in range(min_y, max_y + 1):
+                if float_less_than_or_equal(abs(self.l2_distance(position, (x, y)) - l2_distance), 0.66):
+                    positions_at_distance.append((x, y))
+        
+        return positions_at_distance
 
     def get_initial_positions(self, team: int) -> List[Tuple[int, int]]:
         """Return a list of board positions considered valid initial placement for a team.

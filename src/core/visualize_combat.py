@@ -15,7 +15,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 import global_log
 from visualizer import PygameBoardVisualizer
 from combat import CombatEngine
-from combat_test import setup_combat_scenario
 from units import Unit
 from constant_types import UnitType, UnitRarity
 from pve_round_manager import PvERoundManager

@@ -120,7 +120,6 @@ def main():
                                 board.place_unit(new_u, target)
                                 team2_units.append(new_u)
                                 all_units.append(new_u)
-                                all_units.sort(key=lambda u: (u.position[0]*board.size[1] + u.position[1]))
 
                                 # deduct budget from PvE manager
                                 pve_manager.player_budget = int(pve_manager.player_budget) - int(cost)
@@ -203,15 +202,8 @@ def main():
                                                     # place other unit back to where dragged unit came from
                                                     board.place_unit(other_unit, drag_from)
                                                     placed = True
-                                                    # keep unit lists consistent and update engine teams
-                                                    try:
-                                                        all_units.sort(key=lambda u: (u.position[0]*board.size[1] + u.position[1]))
-                                                    except Exception:
-                                                        pass
-                                                    try:
-                                                        engine.set_teams(team1_units, team2_units)
-                                                    except Exception:
-                                                        pass
+                                                    engine.set_teams(team1_units, team2_units)
+
                                                 except Exception:
                                                     # fallback: return dragged unit to origin later
                                                     placed = False
@@ -368,7 +360,6 @@ def main():
                         engine = CombatEngine(board, combat_seed=42)
                         engine.set_teams(team1_units, team2_units)
                         all_units = [u for u in team1_units + team2_units if u.is_alive()]
-                        all_units.sort(key=lambda u: (u.position[0]*board.size[1] + u.position[1]))
                         # restart paused at beginning of next round
                         paused = True
                         sim_progress = 0.0
@@ -390,7 +381,6 @@ def main():
                     engine = CombatEngine(board, combat_seed=42)
                     engine.set_teams(team1_units, team2_units)
                     all_units = [u for u in team1_units + team2_units if u.is_alive()]
-                    all_units.sort(key=lambda u: (u.position[0]*board.size[1] + u.position[1]))
                     paused = True
                     sim_progress = 0.0
                     continue

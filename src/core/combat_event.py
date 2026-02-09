@@ -21,3 +21,18 @@ class CombatEvent:
     position: Optional[Tuple[int, int]] = None
     description: str = ""
     match_id: Optional[int] = None
+
+    def from_json(self, data: Dict[str, Any]) -> 'CombatEvent':
+        """Create a CombatEvent from a JSON-like dictionary."""
+        return CombatEvent(
+            frame_number=data.get("frame_number", 0),
+            source=None,  # Source and target will be resolved later
+            target=None,
+            event_type=CombatEventType(data.get("event_type", "other_event")),
+            spell_name=data.get("spell_name"),
+            damage=data.get("damage", 0),
+            crit_bool=data.get("crit_bool", False),
+            position=tuple(data["position"]) if "position" in data else None,
+            description=data.get("description", ""),
+            match_id=data.get("match_id")
+        )

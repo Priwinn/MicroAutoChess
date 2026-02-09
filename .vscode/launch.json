@@ -3,12 +3,13 @@
   "configurations": [
     {
       "name": "Python: Visualize Combat",
-      "type": "python",
+      "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/src/core/visualize_combat.py",
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
-      "justMyCode": false
+      "justMyCode": false,
+      "python": "${workspaceFolder}/.venv/Scripts/python.exe"
     }
   ]
 }

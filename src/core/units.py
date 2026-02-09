@@ -277,6 +277,12 @@ class Unit:
     def postmigitation_mana(self, dmg: float):
         """Add mana to the unit from postmigitation damage. Overflow is not allowed for mana gained via damage taken."""
         self.current_mana = min(self.base_stats.max_mana, self.current_mana + 0.07 * dmg)
+
+    def level_up(self):
+        """Level up the unit."""
+        self.level += 1
+        self.current_health = self.get_max_health()
+
     def __str__(self):
         """String representation of the unit."""
         return (f"({self.unit_type.value}, L{self.level}, "

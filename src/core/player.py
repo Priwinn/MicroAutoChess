@@ -19,6 +19,7 @@ class Player:
     gold: int = 10
     level: int = 1
     experience: int = 0
+    max_units_on_board: int = 1
     
     # Units
     bench: List[Unit] = field(default_factory=list)
@@ -88,6 +89,28 @@ class Player:
             return True
         return False
     
+    def add_unit(self, unit: Unit) -> bool:
+        """Add unit to bench or board."""
+        if len(self.bench) < 8:
+            self.bench.append(unit)
+            self.check_unit_level_up()  # Check for level up after adding unit
+            return True
+        elif len(self.units_on_board) < self.max_units_on_board:
+            self.units_on_board.append(unit)
+            self.check_unit_level_up()  # Check for level up after adding unit
+            return True
+        return False
+    
+    def remove_unit(self, unit: Unit) -> bool:
+        """Remove unit from bench or board."""
+        if unit in self.bench:
+            self.bench.remove(unit)
+            return True
+        elif unit in self.units_on_board:
+            self.units_on_board.remove(unit)
+            return True
+        return False
+    
     def reroll_shop(self) -> bool:
         """Reroll shop for new units."""
         reroll_cost = 2
@@ -107,6 +130,28 @@ class Player:
         if self.experience >= exp_needed:
             self.level += 1
             self.experience -= exp_needed
+
+    def check_unit_level_up(self):
+        """Check if a unit can level up (combine 3 of the same unit)."""
+        unit_counts: Dict[str, List[Unit]] = {}
+        
+        # Count units on bench and board
+        for unit in self.bench + self.units_on_board:
+            key = f"{unit.unit_type}_{unit.rarity}"
+            if key not in unit_counts:
+                unit_counts[key] = []
+            unit_counts[key].append(unit)
+        
+        # Check for level up opportunities
+        for key, units in unit_counts.items():
+            if len(units) >= 3:
+                # Level up the first unit and remove 2 others. TODO: Handle permanent stats (e.g. gain AD per kill)
+                leveled_up_unit = units[0].clone()
+                leveled_up_unit.level_up()
+                for i in range(3):
+                    self.remove_unit(units[i])
+                self.add_unit(leveled_up_unit)
+
     
     def take_damage(self, damage: int):
         """Take damage to health."""

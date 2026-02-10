@@ -1,11 +1,16 @@
 from typing import *
-from board import Board, HexBoard
+from board import Board, HexBoard, SquareBoard, DiagonalSquareBoard
 from constant_types import UnitRarity, UnitType
 from units import Unit
 
-def setup_board_from_dict(board_size, unit_dict: Dict[Tuple[int, int], UnitType]) -> Tuple[Board, List[Unit], List[Unit]]:
+def setup_board_from_dict(board_size, unit_dict: Dict[Tuple[int, int], UnitType], board_type='hex') -> Tuple[Board, List[Unit], List[Unit]]:
     """Helper function to set up the board from a dictionary mapping positions to units."""
-    board = HexBoard(board_size)
+    if board_type == 'hex':
+        board = HexBoard(board_size)
+    elif board_type == 'square':
+        board = SquareBoard(board_size)
+    elif board_type == 'diagonal_square':
+        board = DiagonalSquareBoard(board_size)
     team1_units = []
     for position, unit_type in unit_dict.items():
         if board.is_empty(position):
@@ -25,9 +30,10 @@ def setup_board_from_config(config: Dict[str, Any]) -> Tuple[Board, List[Unit], 
     """
     board_size = config.get('board_size') if isinstance(config, dict) else None
     unit_dict = config.get('units') if isinstance(config, dict) else None
+    board_type = config.get('board_type', 'hex') if isinstance(config, dict) else 'hex'
     if board_size is None or unit_dict is None:
         raise ValueError("config must be a dict with 'board_size' and 'units' keys")
-    return setup_board_from_dict(board_size, unit_dict)
+    return setup_board_from_dict(board_size, unit_dict, board_type=board_type)
 
 def get_units_from_config(config: Dict[str, Any]) -> List[Unit]:
     """Extract units from a configuration dict without placing them on a board.

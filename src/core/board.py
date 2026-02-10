@@ -2,6 +2,7 @@
 Game board representation and combat mechanics.
 """
 
+import math
 import numpy as np
 from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass
@@ -74,7 +75,10 @@ class Board:
         self.size = size
         self.width, self.height = size
         self.cells: Dict[Tuple[int, int], BoardCell] = {}
-        
+        #This is an adhoc variable to make it more faithful to the actual game. Why is it like this? Range is definitely not plain l1 or l2 distance, but some weird hybrid.
+        #It might be edge to edge unit model distance, when melee units are big enough they sometimes reach further than their center to center l2 range would suggest,
+        #they keep moving to melee range though.
+        self.range_offset = 0.0 
         # Initialize board cells
         for x in range(self.width):
             for y in range(self.height):
@@ -155,13 +159,13 @@ class Board:
     # @njit
     def l1_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Manhattan distance between two positions."""
-        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+        raise NotImplementedError("This method should be implemented in subclasses based on board type")
 
     @staticmethod
     # @njit
     def l2_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Euclidean distance between two positions."""
-        return np.sqrt((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2)
+        raise NotImplementedError("This method should be implemented in subclasses based on board type")
     
     def pathfind_distance(self, start: Tuple[int, int], target: Tuple[int, int]) -> float:
         """Calculate pathfinding distance between two positions using A*."""
@@ -170,7 +174,7 @@ class Board:
             return float('inf')
         return len(path) - 1  # Number of steps is path length minus 1
     
-    def pathfind_distance_to_range(self, start: Tuple[int, int], target: Tuple[int, int], attack_range: int) -> float:
+    def pathfind_distance_to_range(self, start: Tuple[int, int], target: Tuple[int, int], attack_range: float) -> float:
         """Calculate pathfinding distance to get within attack range of target."""
         target_positions = self.get_positions_in_l2_range(target, attack_range)
         if start in target_positions:
@@ -185,12 +189,7 @@ class Board:
     
     def get_adjacent_positions(self, position: Tuple[int, int]) -> List[Tuple[int, int]]:
         """Get valid adjacent positions."""
-        x, y = position
-        adjacent = [
-            (x+1, y), (x-1, y), (x, y+1), (x, y-1),
-            #(x+1, y+1), (x+1, y-1), (x-1, y+1), (x-1, y-1) # Uncomment for diagonal movement
-        ]
-        return [pos for pos in adjacent if self.is_valid_position(pos)]
+        raise NotImplementedError("This method should be implemented in subclasses based on board type")
     
     def get_adjacent_cells(self, position: Tuple[int, int]) -> List[BoardCell]:
         """Get adjacent cells for a given position."""
@@ -207,45 +206,15 @@ class Board:
     
     def get_positions_in_l1_range(self, position: Tuple[int, int], l1_range: int) -> List[Tuple[int, int]]:
         """Get all positions within a certain amount of steps from a position."""
-        positions_in_range = []
-        for dx in range(-l1_range, l1_range + 1):
-            for dy in range(-l1_range + abs(dx), l1_range - abs(dx) + 1):
-                new_pos = (position[0] + dx, position[1] + dy)
-                if self.is_valid_position(new_pos):
-                    positions_in_range.append(new_pos)
-        return positions_in_range
+        raise NotImplementedError("This method should be implemented in subclasses based on board type")
     
     def get_positions_in_l2_range(self, position: Tuple[int, int], l2_range: float) -> List[Tuple[int, int]]:
         """Get all positions within a certain Euclidean distance from a position."""
-        positions_in_range = []
-        x0, y0 = position
-        min_x = max(0, int(x0 - l2_range))
-        max_x = min(self.width - 1, int(x0 + l2_range))
-        min_y = max(0, int(y0 - l2_range))
-        max_y = min(self.height - 1, int(y0 + l2_range))
-        
-        for x in range(min_x, max_x + 1):
-            for y in range(min_y, max_y + 1):
-                if float_less_than_or_equal(self.l2_distance(position, (x, y)), l2_range):
-                    positions_in_range.append((x, y))
-        
-        return positions_in_range
+        raise NotImplementedError("This method should be implemented in subclasses based on board type")
     
     def get_positions_at_l2_distance(self, position: Tuple[int, int], l2_distance: float) -> List[Tuple[int, int]]:
         """Get all positions exactly at a certain Euclidean distance from a position."""
-        positions_at_distance = []
-        x0, y0 = position
-        min_x = max(0, int(x0 - l2_distance))
-        max_x = min(self.width - 1, int(x0 + l2_distance))
-        min_y = max(0, int(y0 - l2_distance))
-        max_y = min(self.height - 1, int(y0 + l2_distance))
-        
-        for x in range(min_x, max_x + 1):
-            for y in range(min_y, max_y + 1):
-                if float_less_than_or_equal(abs(self.l2_distance(position, (x, y)) - l2_distance), 0.66):
-                    positions_at_distance.append((x, y))
-        
-        return positions_at_distance
+        raise NotImplementedError("This method should be implemented in subclasses based on board type")
 
     def get_initial_positions(self, team: int) -> List[Tuple[int, int]]:
         """Return a list of board positions considered valid initial placement for a team.
@@ -354,12 +323,12 @@ class Board:
 
         return []
 
-    def find_path_to_range_guided(self, start: Tuple[int, int], target: Tuple[int, int], attack_range: int) -> List[Tuple[int, int]]:
+    def find_path_to_range_guided(self, start: Tuple[int, int], target: Tuple[int, int], attack_range: float) -> List[Tuple[int, int]]:
         """Find path to get within attack range of target using A* algorithm with guided movement."""
         target_positions = self.get_positions_in_l2_range(target, attack_range)
         target_positions = [pos for pos in target_positions if self.get_cell(pos).is_empty() or pos == start]
-        #Sort target positions by vertical distance to start to prefer horizontal movement
-        target_positions.sort(key=lambda pos: abs(pos[1]-start[1]))
+        #Sort target positions by vertical distance to start to prefer horizontal movement. Ties are broken by l2 distance to target to prefer moves that get closer to target.
+        target_positions.sort(key=lambda pos: abs(pos[1]-start[1])+self.l2_distance(pos, target)/100)
         shortest_path = []
         min_length = float('inf')
         for pos in target_positions:
@@ -420,10 +389,102 @@ class Board:
     
     def print_board(self, title: str = ""):
         """Print current board state."""
+        raise NotImplementedError("This method should be implemented in subclasses based on board type")
+    
+    def coord_to_pixel(self, position: Tuple[int, int], cell_radius: int = 50) -> Tuple[int, int]:
+        """Convert board coordinates to pixel coordinates of cell center for visualization."""
+        raise NotImplementedError("This method should be implemented in subclasses based on board type")
+    
+    def get_cell_corners(self, position: Tuple[int, int], cell_radius: int = 50) -> List[Tuple[int, int]]:
+        """Get pixel coordinates of the corners of a cell for visualization. Input is cell center pixel position and cell radius in pixels."""
+        raise NotImplementedError("This method should be implemented in subclasses based on board type")
+
+
+class SquareBoard(Board):
+    """Square board implementation."""
+
+    def __init__(self, size: Tuple[int, int] = (7, 8)):
+        super().__init__(size)
+        self.range_offset = 0.25  
+    
+    @staticmethod
+    # @njit
+    def l1_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
+        """Calculate Manhattan distance between two positions."""
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
+    @staticmethod
+    # @njit
+    def l2_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
+        """Calculate Euclidean distance between two positions."""
+        return np.sqrt((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2)
+    
+    def get_adjacent_positions(self, position: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """Get valid adjacent positions."""
+        x, y = position
+        adjacent = [
+            (x+1, y), (x-1, y), (x, y+1), (x, y-1),
+            #(x+1, y+1), (x+1, y-1), (x-1, y+1), (x-1, y-1) # Uncomment for diagonal movement
+        ]
+        return [pos for pos in adjacent if self.is_valid_position(pos)]
+    
+    def get_adjacent_cells(self, position: Tuple[int, int]) -> List[BoardCell]:
+        """Get adjacent cells for a given position."""
+        """Returns a list of adjacent cell positions."""
+        if not self.is_valid_position(position):
+            raise ValueError(f"Position {position} is out of bounds")
+        
+        adjacent = self.get_adjacent_positions(position)
+        return [self.get_cell(pos) for pos in adjacent if self.get_cell(pos) is not None]
+
+    
+    def get_positions_in_l1_range(self, position: Tuple[int, int], l1_range: int) -> List[Tuple[int, int]]:
+        """Get all positions within a certain amount of steps from a position."""
+        positions_in_range = []
+        for dx in range(-l1_range, l1_range + 1):
+            for dy in range(-l1_range + abs(dx), l1_range - abs(dx) + 1):
+                new_pos = (position[0] + dx, position[1] + dy)
+                if self.is_valid_position(new_pos):
+                    positions_in_range.append(new_pos)
+        return positions_in_range
+    
+    def get_positions_in_l2_range(self, position: Tuple[int, int], l2_range: float) -> List[Tuple[int, int]]:
+        """Get all positions within a certain Euclidean distance from a position."""
+        positions_in_range = []
+        x0, y0 = position
+        min_x = max(0, int(x0 - l2_range))
+        max_x = min(self.width - 1, int(x0 + l2_range))
+        min_y = max(0, int(y0 - l2_range))
+        max_y = min(self.height - 1, int(y0 + l2_range))
+        
+        for x in range(min_x, max_x + 1):
+            for y in range(min_y, max_y + 1):
+                if float_less_than_or_equal(self.l2_distance(position, (x, y)), l2_range):
+                    positions_in_range.append((x, y))
+        
+        return positions_in_range
+    
+    def get_positions_at_l2_distance(self, position: Tuple[int, int], l2_distance: float) -> List[Tuple[int, int]]:
+        """Get all positions exactly at a certain Euclidean distance from a position."""
+        positions_at_distance = []
+        x0, y0 = position
+        min_x = max(0, int(x0 - l2_distance))
+        max_x = min(self.width - 1, int(x0 + l2_distance))
+        min_y = max(0, int(y0 - l2_distance))
+        max_y = min(self.height - 1, int(y0 + l2_distance))
+        
+        for x in range(min_x, max_x + 1):
+            for y in range(min_y, max_y + 1):
+                if float_less_than_or_equal(abs(self.l2_distance(position, (x, y)) - l2_distance), 0.66):
+                    positions_at_distance.append((x, y))
+        
+        return positions_at_distance
+
+    
+    def print_board(self, title: str = ""):
+        """Print current board state."""
         if title:
             print(f"\n=== {title} ===")
-        
-        
         print("  ", end="")
         for x in range(self.width):
             print(f"{x:2}", end="")
@@ -446,6 +507,23 @@ class Board:
                     print(" .", end="")
             print()
         print()
+
+    def coord_to_pixel(self, position: Tuple[int, int], cell_radius: int = 50) -> Tuple[int, int]:
+        """Convert board coordinates to pixel coordinates of cell center for visualization."""
+        x, y = position
+        pixel_x = x * cell_radius * math.sqrt(2) + cell_radius / math.sqrt(2)
+        pixel_y = y * cell_radius * math.sqrt(2) + cell_radius / math.sqrt(2)
+        return (int(pixel_x), int(pixel_y))
+    
+    def get_cell_corners(self, position: Tuple[int, int], cell_radius: int = 50) -> List[Tuple[int, int]]:
+        """Get pixel coordinates of the corners of a cell for visualization. Input is cell center pixel position and cell radius in pixels."""
+        x, y = position
+        top_left = (int(x + cell_radius / math.sqrt(2)), int(y + cell_radius / math.sqrt(2)))
+        top_right = (int(x - cell_radius / math.sqrt(2)), int(y + cell_radius / math.sqrt(2)))
+        bottom_right = (int(x - cell_radius / math.sqrt(2)), int(y - cell_radius / math.sqrt(2)))
+        bottom_left = (int(x + cell_radius / math.sqrt(2)), int(y - cell_radius / math.sqrt(2)))
+        
+        return [top_left, top_right, bottom_right, bottom_left]
     
 
     
@@ -457,6 +535,7 @@ class HexBoard(Board):
     
     def __init__(self, size: Tuple[int, int] = (7, 8)):
         super().__init__(size)
+        self.range_offset = 1/6
     
     
     def get_adjacent_positions(self, position: Tuple[int, int]) -> List[Tuple[int, int]]:
@@ -632,6 +711,26 @@ class HexBoard(Board):
         # Convert canvas to string lines
         ascii_art = "\n".join("".join(row) for row in canvas)
         print(ascii_art)
+    
+    def coord_to_pixel(self, position: Tuple[int, int], cell_radius: int = 50) -> Tuple[int, int]:
+        """Convert board coordinates to pixel coordinates of cell center for visualization."""
+        q,r = oddr_to_axial(position)
+        x = int(cell_radius * math.sqrt(3) * (q + r / 2))
+        y = int(cell_radius * 1.5 * r)
+        return (x, y)
+    
+    def get_cell_corners(self, position: Tuple[int, int], cell_radius: int = 50) -> List[Tuple[int, int]]:
+        """Get pixel coordinates of the corners of a cell for visualization. Input is cell pixel position and cell size in pixels."""
+        corners = []
+        center_x, center_y = position
+        for i in range(6):
+            angle_deg = 60 * i - 30  # Start at -30 degrees to have a point-up hex
+            angle_rad = math.radians(angle_deg)
+            corner_x = int(center_x + cell_radius * math.cos(angle_rad))
+            corner_y = int(center_y + cell_radius * math.sin(angle_rad))
+            corners.append((corner_x, corner_y))
+        return corners
+
 
 # @njit
 def oddr_to_axial(position: Tuple[int, int]) -> Tuple[int, int]:
@@ -648,7 +747,39 @@ def axial_to_oddr(position: Tuple[int, int]) -> Tuple[int, int]:
     y = r
     return (x, y)
 
+class DiagonalSquareBoard(SquareBoard):
+    """Square board implementation with diagonal movement allowed."""
+
+    def __init__(self, size: Tuple[int, int] = (7, 8)):
+        super().__init__(size)
+
+    @staticmethod
+    # @njit
+    def l2_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
+        """We set l2 distance to be the same as l1 distance when diagonal movement is allowed, since it effectively becomes a hybrid of l1 and l2."""
+        return max(abs(pos1[0] - pos2[0]), abs(pos1[1] - pos2[1]))
+    
+    def get_adjacent_positions(self, position: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """Get valid adjacent positions with diagonals."""
+        x, y = position
+        adjacent = [
+            (x+1, y), (x-1, y), (x, y+1), (x, y-1),  # Cardinal directions
+            (x+1, y+1), (x+1, y-1), (x-1, y+1), (x-1, y-1)  # Diagonal directions
+        ]
+        return [pos for pos in adjacent if self.is_valid_position(pos)]
+    
+    def get_positions_in_l1_range(self, position: Tuple[int, int], l1_range: int) -> List[Tuple[int, int]]:
+        """Get all positions within a certain amount of steps from a position."""
+        positions_in_range = []
+        for dx in range(-l1_range, l1_range + 1):
+            for dy in range(-l1_range, l1_range + 1):
+                new_pos = (position[0] + dx, position[1] + dy)
+                if self.is_valid_position(new_pos):
+                    positions_in_range.append(new_pos)
+        return positions_in_range
+
 #TODO: Triangular board?
+
 
             
         

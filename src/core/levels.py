@@ -5,6 +5,7 @@ from units import Unit
 
 LEVEL1 = {
     'board_size': (7, 8),
+    'board_type': 'hex',
     'units': {
         (3, 3): UnitType.TANK,
         (2, 1): UnitType.ARCHER,

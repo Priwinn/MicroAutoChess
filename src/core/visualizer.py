@@ -10,31 +10,6 @@ import spells
 import pygame.display
 
 
-def oddr_to_axial(position: Tuple[int, int]) -> Tuple[int, int]:
-    x, y = position
-    q = x - (y - (y & 1)) // 2
-    r = y
-    return (q, r)
-
-
-def hex_to_pixel(q: int, r: int, size: float) -> Tuple[float, float]:
-    """Convert axial hex coords to pixel coords (pointy-top)."""
-    x = size * math.sqrt(3) * (q + r / 2)
-    y = size * 1.5 * r
-    return x, y
-
-
-def hexagon_corners(center_x: float, center_y: float, size: float):
-    """Return 6 points for a pointy-top hex centered at given pixel coords."""
-    points = []
-    for i in range(6):
-        angle = math.pi / 180 * (60 * i - 30)
-        px = center_x + size * math.cos(angle)
-        py = center_y + size * math.sin(angle)
-        points.append((px, py))
-    return points
-
-
 class PygameBoardVisualizer:
     """Render `Board` (both square and odd-r hex) using pygame.
 
@@ -264,13 +239,11 @@ class PygameBoardVisualizer:
                 positions = [c.position for c in cells]
                 surf = pygame.Surface(self.window_size, pygame.SRCALPHA)
                 for p in positions:
-                    q, r = oddr_to_axial(p)
-                    px, py = hex_to_pixel(q, r, self.cell_radius)
+                    px, py = self.board.coord_to_pixel(p, self.cell_radius)
                     center_x = int(px + self.left_offset + self.margin)
                     center_y = int(py + self.margin + self.cell_radius + 4)
-                    corners = hexagon_corners(center_x, center_y, self.cell_radius)
-                    int_corners = [(int(x), int(y)) for x, y in corners]
-                    pygame.draw.polygon(surf, (color[0], color[1], color[2], alpha), int_corners)
+                    corners = self.board.get_cell_corners((center_x, center_y), self.cell_radius)
+                    pygame.draw.polygon(surf, (color[0], color[1], color[2], alpha), corners)
                 self.screen.blit(surf, (0, 0))
                 aoe_remaining.append(aoe)
         self.aoe_animations = aoe_remaining
@@ -419,14 +392,13 @@ class PygameBoardVisualizer:
             for y in range(self.board.height):
                 cell = self.board.get_cell((x, y))
 
-                # Convert odd-r offset to axial, then to pixel
-                q, r = oddr_to_axial((x, y))
-                px, py = hex_to_pixel(q, r, self.cell_radius)
+                # Convert cell coordinates to pixel coordinates
+                px, py = self.board.coord_to_pixel((x, y), self.cell_radius)
                 # apply left offset and margin when computing cell center
                 center_x = int(px + self.left_offset + self.margin)
                 center_y = int(py + self.margin + self.cell_radius + 4)
 
-                corners = hexagon_corners(center_x, center_y, self.cell_radius)
+                corners = self.board.get_cell_corners((center_x, center_y), self.cell_radius)
                 # If highlighting is enabled and this cell is in the player's initial zone,
                 # draw a white border to indicate valid placement while dragging.
                 if (x, y) in highlighted_positions:
@@ -491,8 +463,8 @@ class PygameBoardVisualizer:
         for x in range(self.board.width):
             for y in range(self.board.height):
                 cell = self.board.get_cell((x, y))
-                q, r = oddr_to_axial((x, y))
-                px, py = hex_to_pixel(q, r, self.cell_radius)
+
+                px, py = self.board.coord_to_pixel((x, y), self.cell_radius)
                 center_x = int(px + self.left_offset + self.margin)
                 center_y = int(py + self.margin + self.cell_radius + 4)
                 dx = mx - center_x
@@ -903,10 +875,8 @@ class PygameBoardVisualizer:
         t = (sim_frame + sim_progress - start_f) / denom
         t = max(0.0, min(1.0, t))
 
-        q1, r1 = oddr_to_axial(action.start_position)
-        q2, r2 = oddr_to_axial(action.target_position)
-        x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
-        x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
+        x1, y1 = self.board.coord_to_pixel(action.start_position, self.cell_radius)
+        x2, y2 = self.board.coord_to_pixel(action.target_position, self.cell_radius)
         cx1 = x1 + self.left_offset + self.margin
         cy1 = y1 + self.margin + self.cell_radius + 4
         cx2 = x2 + self.left_offset + self.margin
@@ -928,10 +898,8 @@ class PygameBoardVisualizer:
         t = (sim_frame + sim_progress - start_f) / denom
         t = max(0.0, min(1.0, t))
 
-        q1, r1 = oddr_to_axial(action.start_position)
-        q2, r2 = oddr_to_axial(action.target.position)
-        x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
-        x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
+        x1, y1 = self.board.coord_to_pixel(action.start_position, self.cell_radius)
+        x2, y2 = self.board.coord_to_pixel(action.target.position, self.cell_radius)
         cx1 = x1 + self.left_offset + self.margin
         cy1 = y1 + self.margin + self.cell_radius + 4
         cx2 = x2 + self.left_offset + self.margin
@@ -958,8 +926,7 @@ class PygameBoardVisualizer:
         t = (sim_frame + sim_progress - start_f) / denom
         t = max(0.0, min(1.0, t))
 
-        q1, r1 = oddr_to_axial(action.start_position)
-        x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
+        x1, y1 = self.board.coord_to_pixel(action.start_position, self.cell_radius)
         cx1 = x1 + self.left_offset + self.margin
         cy1 = y1 + self.margin + self.cell_radius + 4
 
@@ -972,8 +939,7 @@ class PygameBoardVisualizer:
         if target_pos is None:
             return
 
-        q2, r2 = oddr_to_axial(target_pos)
-        x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
+        x2, y2 = self.board.coord_to_pixel(target_pos, self.cell_radius)
         cx2 = x2 + self.left_offset + self.margin
         cy2 = y2 + self.margin + self.cell_radius + 4
 
@@ -1001,8 +967,7 @@ class PygameBoardVisualizer:
         t = (sim_frame + sim_progress - start_f) / denom
         t = max(0.0, min(1.0, t))
 
-        q1, r1 = oddr_to_axial(action.start_position)
-        x1, y1 = hex_to_pixel(q1, r1, self.cell_radius)
+        x1, y1 = self.board.coord_to_pixel(action.start_position, self.cell_radius)
         cx1 = x1 + self.left_offset + self.margin
         cy1 = y1 + self.margin + self.cell_radius + 4
 
@@ -1015,8 +980,7 @@ class PygameBoardVisualizer:
         if target_pos is None:
             return
 
-        q2, r2 = oddr_to_axial(target_pos)
-        x2, y2 = hex_to_pixel(q2, r2, self.cell_radius)
+        x2, y2 = self.board.coord_to_pixel(target_pos, self.cell_radius)
         cx2 = x2 + self.left_offset + self.margin
         cy2 = y2 + self.margin + self.cell_radius + 4
 
@@ -1064,8 +1028,7 @@ class PygameBoardVisualizer:
             src = getattr(ev, 'source', None)
             if src is None or getattr(src, 'position', None) is None:
                 return
-            q, r = oddr_to_axial(src.position)
-            px, py = hex_to_pixel(q, r, self.cell_radius)
+            px, py = self.board.coord_to_pixel(src.position, self.cell_radius)
             cx = int(px + self.left_offset + self.margin)
             cy = int(py + self.margin + self.cell_radius + 4)
             base_color = desc.get('base_color_hint') or self.team_colors.get(getattr(src, 'team', None), (200, 200, 50))
@@ -1099,8 +1062,7 @@ class PygameBoardVisualizer:
             self.unit_info[src.id] = {'symbol': src._get_unit_symbol(), 'team': getattr(src, 'team', None)}
         if pos is None:
             return
-        q, r = oddr_to_axial(pos)
-        px, py = hex_to_pixel(q, r, self.cell_radius)
+        px, py = self.board.coord_to_pixel(pos, self.cell_radius)
         cx = int(px + self.left_offset + self.margin)
         cy = int(py + self.margin + self.cell_radius + 4)
         txt = str(int(ev.damage)) + ("*" if getattr(ev, 'crit_bool', False) else "")
@@ -1124,8 +1086,7 @@ class PygameBoardVisualizer:
 
     def get_cell_center(self, position: Tuple[int, int]) -> Tuple[int, int]:
         """Return pixel center (x,y) for a board cell position (x,y)."""
-        q, r = oddr_to_axial(position)
-        px, py = hex_to_pixel(q, r, self.cell_radius)
+        px, py = self.board.coord_to_pixel(position, self.cell_radius)
         center_x = int(px + self.left_offset + self.margin)
         center_y = int(py + self.margin + self.cell_radius + 4)
         return center_x, center_y

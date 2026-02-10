@@ -317,7 +317,7 @@ class CombatEngine:
         distance = self.board.l2_distance(unit.position, target.position)
 
         # If the unit has a ranged spell and enough mana, it can cast it if the target is within spell range
-        if unit.current_mana >= unit.base_stats.max_mana and unit.base_stats.spell.ranged and float_less_than_or_equal(distance, unit.base_stats.spell.range): #probably need to add 0.66 here too?
+        if unit.current_mana >= unit.base_stats.max_mana and unit.base_stats.spell.ranged and float_less_than_or_equal(distance, unit.base_stats.spell.range): #Might want to add range offset but spells behave differently in the original, specially when it says target the farthest enemy in 4 hex range, it looks like it is l1 distance.
             # If the unit has enough mana and a ranged spell, it can cast it
             # Plan spell cast
             valid_prepare = unit.base_stats.spell.prepare(unit, self.board)
@@ -331,8 +331,8 @@ class CombatEngine:
                 )
             else:
                 raise ValueError("Invalid prepare for spell")
-
-        if distance <= unit.base_stats.range + 0.66:  # Adding 0.66 because (0,0) 4 range reaches (3,4)  in that other game. It also reaches (0,5) and (1,5) but not (2,5), like the other game. Also ensures 1 range units only reach adjacent cells.
+        #See range_offset comment in board.py, range is not exact, units sometimes can attack from further than their center to center l2 distance would suggest, probably because of hitbox size and edge to edge unit model. This is an adhoc fix to make it more faithful to the actual game, might need further tweaking.
+        if distance <= unit.base_stats.range + self.board.range_offset*unit.base_stats.range:  
             # In range - plan attack
             return PlannedAction(
                 unit=unit,
@@ -359,7 +359,7 @@ class CombatEngine:
             return None
         
         # Find path towards target
-        path = self.board.find_path_to_range_guided(unit.position, target.position, unit.base_stats.range)
+        path = self.board.find_path_to_range_guided(unit.position, target.position, unit.base_stats.range + self.board.range_offset*unit.base_stats.range)  # See range_offset comment in board.py
         
         if path:
             new_position = path[1]
@@ -490,11 +490,11 @@ class CombatEngine:
         """Find the best target for the unit."""
         if not enemies or not unit.position:
             return None
-        # If the unit already has a target, it's still valid, and is within range + 1.66, return it
+        # If the unit already has a target, it's still valid, and is within range + 1, return it
         # This allows the unit to keep attacking the same target if it is still valid and chase it if one cell movement is enough to reach it
         if unit.current_target and \
            unit.current_target in enemies and \
-           self.board.pathfind_distance_to_range(unit.position, unit.current_target.position, unit.base_stats.range) <= 1.66:
+           self.board.pathfind_distance_to_range(unit.position, unit.current_target.position, unit.base_stats.range + self.board.range_offset*unit.base_stats.range) <= 1:
             return unit.current_target
         
         # Targeting: Find the closest enemy by pathfinding distance to within attack range
@@ -509,7 +509,7 @@ class CombatEngine:
             if not enemy.position:
                 continue
             
-            distance = self.board.pathfind_distance_to_range(unit.position, enemy.position, unit.base_stats.range)
+            distance = self.board.pathfind_distance_to_range(unit.position, enemy.position, unit.base_stats.range + self.board.range_offset*unit.base_stats.range)  # See range_offset comment in board.py
             if distance == float('inf'):
                 continue
             if distance < min_distance:
@@ -534,7 +534,7 @@ class CombatEngine:
                 if not enemy.position:
                     continue
                 
-                distance = self.board.pathfind_distance_to_range(unit.position, enemy.position, unit.base_stats.range)
+                distance = self.board.pathfind_distance_to_range(unit.position, enemy.position, unit.base_stats.range + self.board.range_offset*unit.base_stats.range)  # See range_offset comment in board.py
                 if distance == float('inf'):
                     continue
                 if distance < min_distance:

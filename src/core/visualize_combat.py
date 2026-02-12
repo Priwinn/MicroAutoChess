@@ -20,6 +20,7 @@ from constant_types import UnitType, UnitRarity
 from pve_round_manager import PvERoundManager
 from utils import setup_board_from_dict, setup_board_from_config
 from levels import LEVELS
+from player import Player
 
 
 def main():
@@ -28,21 +29,24 @@ def main():
     pve_manager = PvERoundManager(configs=round_configs)
     board, team1_units, team2_units = pve_manager.setup_round()
 
+    # Create Player objects and assign units on board
+    player1 = Player(player_id=1)
+    player1.units_on_board = team1_units
+    player2 = Player(player_id=2)
+    player2.units_on_board = team2_units
+
     render_fps = 60
     dt = 1/render_fps
 
     visual = PygameBoardVisualizer(board, render_fps=render_fps, cell_radius=40)
-    engine = CombatEngine(board, combat_seed=42)
-    engine.set_teams(team1_units, team2_units)
+    engine = CombatEngine(board, player1, player2, combat_seed=42)
+
 
     running = True
     paused = True
     engine_fps = 10  # number of simulation frames per second
 
 
-    # initial planning for frame 0
-    all_units = [u for u in team1_units + team2_units if u.is_alive()]
-    # engine._plan_actions(all_units)
     sim_progress = 0.0
     # drag state for repositioning units before combat starts
     dragging = False
@@ -118,14 +122,13 @@ def main():
                                 new_u.current_health = new_u.get_max_health()
                                 new_u.current_mana = 0
                                 board.place_unit(new_u, target)
-                                team2_units.append(new_u)
-                                all_units.append(new_u)
+                                player2.units_on_board.append(new_u)
 
                                 # deduct budget from PvE manager
                                 pve_manager.player_budget = int(pve_manager.player_budget) - int(cost)
 
                                 # update engine teams
-                                engine.set_teams(team1_units, team2_units)
+                                engine.update_players(player1, player2)
 
                             # consume click
                             break
@@ -171,12 +174,11 @@ def main():
                                 pve_manager.player_budget = int(pve_manager.player_budget) + int(refund)
                                 
                                 # remove from team2 units list
-                                if dragged_unit in team2_units:
-                                    team2_units.remove(dragged_unit)
-                                    all_units.remove(dragged_unit)
+                                if dragged_unit in player2.units_on_board:
+                                    player2.units_on_board.remove(dragged_unit)
 
                                 # update engine teams
-                                engine.set_teams(team1_units, team2_units)
+                                engine.update_players(player1, player2)
                                 sold = True
 
                             if not sold:
@@ -202,7 +204,7 @@ def main():
                                                     # place other unit back to where dragged unit came from
                                                     board.place_unit(other_unit, drag_from)
                                                     placed = True
-                                                    engine.set_teams(team1_units, team2_units)
+                                                    engine.update_players(player1, player2)
 
                                                 except Exception:
                                                     # fallback: return dragged unit to origin later
@@ -225,21 +227,21 @@ def main():
                     # single-step forward when paused
                     if event.key == pygame.K_n:
                         # advance one simulation frame
-                        engine._execute_delayed_frame(all_units=all_units)
+                        engine._execute_delayed_frame()
                         sim_progress = 0.0
 
             if not paused:
                 sim_progress += dt * engine_fps
                 # advance as many whole simulation frames as needed
                 while sim_progress >= 1.0:
-                    engine._execute_delayed_frame(all_units=all_units)
+                    engine._execute_delayed_frame()
                     sim_progress -= 1.0
 
             # when the match actually starts (unpaused at frame 0), capture player starting positions
                 if not paused and engine.frame_number == 0:
-                    # capture current player and enemy unit starting positions
-                    pve_manager.initial_player = pve_manager._clone_unit_list(team2_units)
-                    player_positions = [u.position for u in team2_units if getattr(u, 'position', None) is not None]
+                                    # capture current player and enemy unit starting positions
+                    pve_manager.initial_player = pve_manager._clone_unit_list(player2.units_on_board)
+                    player_positions = [u.position for u in player2.units_on_board if getattr(u, 'position', None) is not None]
                     if player_positions:
                         pve_manager.save_player_positions(player_positions)
 
@@ -348,18 +350,19 @@ def main():
             
 
             # Check for win condition
-            team1_alive = any(u.is_alive() and u.team == 1 for u in team1_units)
-            team2_alive = any(u.is_alive() and u.team == 2 for u in team2_units)
+            team1_alive = any(u.is_alive() and u.team == 1 for u in player1.units_on_board)
+            team2_alive = any(u.is_alive() and u.team == 2 for u in player2.units_on_board)
             if (not team1_alive or not team2_alive) and engine.frame_number > 0:
                 # player won -> advance to next enemy configuration if available
                 if not team1_alive:
                     advanced = pve_manager.advance_round()
                     if advanced:
                         # apply next round: place new enemy config, keep player's current units
-                        team1_units, team2_units = pve_manager.apply_round_to_board(board, player_units=team2_units, reset_player=True)
-                        engine = CombatEngine(board, combat_seed=42)
-                        engine.set_teams(team1_units, team2_units)
-                        all_units = [u for u in team1_units + team2_units if u.is_alive()]
+                        team1_units, team2_units = pve_manager.apply_round_to_board(board, player_units=player2.units_on_board, reset_player=True)
+                        # update player objects with new lists
+                        player1.units_on_board = team1_units
+                        player2.units_on_board = team2_units
+                        engine = CombatEngine(board, player1, player2, combat_seed=42)
                         # restart paused at beginning of next round
                         paused = True
                         sim_progress = 0.0
@@ -369,18 +372,23 @@ def main():
                         display_win_screen(visual)
                         pve_manager = PvERoundManager(configs=round_configs)
                         board, team1_units, team2_units = pve_manager.setup_round()
+                        # recreate player objects
+                        player1 = Player(player_id=1)
+                        player1.units_on_board = team1_units
+                        player2 = Player(player_id=2)
+                        player2.units_on_board = team2_units
                         visual = PygameBoardVisualizer(board, render_fps=render_fps, cell_radius=40)
-                        engine = CombatEngine(board, combat_seed=42)
-                        engine.set_teams(team1_units, team2_units)
+                        engine = CombatEngine(board, player1, player2, combat_seed=42)
                         global_log.combat_log.clear()
                         # running = False
 
                 else:
                     # player lost -> reset to round initial configuration and restore player's units
                     team1_units, team2_units = pve_manager.apply_round_to_board(board, player_units=None, reset_player=True)
-                    engine = CombatEngine(board, combat_seed=42)
-                    engine.set_teams(team1_units, team2_units)
-                    all_units = [u for u in team1_units + team2_units if u.is_alive()]
+                    # update players
+                    player1.units_on_board = team1_units
+                    player2.units_on_board = team2_units
+                    engine = CombatEngine(board, player1, player2, combat_seed=42)
                     paused = True
                     sim_progress = 0.0
                     continue

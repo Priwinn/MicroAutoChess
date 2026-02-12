@@ -50,6 +50,7 @@ class UnitStats:
     move_speed: float = 1.0 
     attack_speed: float = 1.0
     spell: AbstractSpell = None
+    initial_mana: float = 0
 
 
 @dataclass
@@ -67,6 +68,7 @@ class Unit:
     planned_position: Optional[tuple] = None  # Position planned for next move
     current_health: float = None
     current_mana: float = 0
+    
     basic_attack_mana: float = 10
     cost : int = 1
     
@@ -138,7 +140,6 @@ class Unit:
         """Check if unit is alive."""
         return self.current_health > 0
 
-    # TODO LOG COMBAT EVENTS HERE
     def take_damage(self, damage_obj: Damage, source: 'Unit' = None, spell_name: str = "") -> float:
         """Apply damage to unit, returns actual damage taken."""
         if damage_obj.heal:
@@ -201,27 +202,27 @@ class Unit:
             return int(base_damage * self.base_stats.crit_dmg), True
         return base_damage, False
     
-    def can_upgrade(self, other_units: List['Unit']) -> bool:
-        """Check if unit can be upgraded with other units."""
-        # Need 3 units of same type and level to upgrade
-        same_type_level = [
-            u for u in other_units 
-            if (u.unit_type == self.unit_type and 
-                u.level == self.level and 
-                u != self)
-        ]
-        return len(same_type_level) >= 2
+    # def can_upgrade(self, other_units: List['Unit']) -> bool:
+    #     """Check if unit can be upgraded with other units."""
+    #     # Need 3 units of same type and level to upgrade
+    #     same_type_level = [
+    #         u for u in other_units 
+    #         if (u.unit_type == self.unit_type and 
+    #             u.level == self.level and 
+    #             u != self)
+    #     ]
+    #     return len(same_type_level) >= 2
     
-    def upgrade(self) -> 'Unit':
-        """Create upgraded version of this unit."""
-        upgraded = Unit(
-            unit_type=self.unit_type,
-            rarity=self.rarity,
-            team=self.team,
-            level=self.level + 1,
-            position=self.position
-        )
-        return upgraded
+    # def upgrade(self) -> 'Unit':
+    #     """Create upgraded version of this unit."""
+    #     upgraded = Unit(
+    #         unit_type=self.unit_type,
+    #         rarity=self.rarity,
+    #         team=self.team,
+    #         level=self.level + 1,
+    #         position=self.position
+    #     )
+    #     return upgraded
     
     def to_array(self) -> np.ndarray:
         """Convert unit to numerical array representation."""
@@ -289,3 +290,13 @@ class Unit:
                 f"HP: {self.current_health:.1f}/{self.get_max_health()}, "
                 f"Mana: {self.current_mana:.1f}/{self.base_stats.max_mana}), "
                 f"Pos: {self.position}")
+    
+    def round_reset(self):
+        """Reset health, mana, and buffs at the end of the round."""
+        self.current_health = self.get_max_health()
+        self.current_mana = self.base_stats.initial_mana
+        self.buffs.clear()
+        self.current_target = None
+        self.basic_attack_overflow = 0.0
+        self.base_stats.spell.round_reset()
+

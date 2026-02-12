@@ -15,6 +15,7 @@ import math
 from board import Board
 from units import Unit, UnitType
 from combat_event import CombatEvent
+from player import Player
 import global_log
 from math_utils import float_less_than_or_equal
 
@@ -60,7 +61,7 @@ class CombatEngine:
     Actions are planned and then executed after their resolution delay.
     """
     
-    def __init__(self, board: Board, combat_seed: Optional[int] = None, action_timing: Optional[ActionTiming] = None):
+    def __init__(self, board: Board, player1: Player, player2: Player, combat_seed: Optional[int] = None, action_timing: Optional[ActionTiming] = None):
         self.board = board
         self.combat_log: List[CombatEvent] = global_log.combat_log
         self.frame_number = 0
@@ -75,26 +76,35 @@ class CombatEngine:
         # Combat seed for deterministic behavior
         self.combat_seed = combat_seed
         self.rng = random.Random(combat_seed) if combat_seed is not None else random.Random()
+        self.player1 = player1
+        self.player2 = player2
+        self.set_teams()
 
-    def set_teams(self, team1: List[Unit], team2: List[Unit]):
+    def set_teams(self):
         """
-        Set the teams for combat.
-        Each team is a list of Unit objects.
+        Set the teams for combat using Player objects.
+        Extracts `units_on_board` from each player and assigns team ids.
+        Returns the two lists of units used for combat.
         """
-        # Assign teams to units
-        for unit in team1:
+
+        # Assign teams to units on board
+        for unit in self.player1.units_on_board:
             unit.team = 1
-        for unit in team2:
-            unit.team = 2    
-        return team1, team2
+        for unit in self.player2.units_on_board:
+            unit.team = 2
     
-    def simulate_combat(self, team1_units: List[Unit], team2_units: List[Unit]) -> int:
+    def update_players(self, player1: Player, player2: Player):
+        """Update player objects after combat, syncing health and units on board."""
+        self.player1 = player1
+        self.player2 = player2
+        self.set_teams()
+    
+    def simulate_combat(self) -> int:
         """
-        Simulate combat between two teams.
+        Simulate combat between two players.
+        Accepts two `Player` objects and uses their `units_on_board` lists.
         Returns winning team (1 or 2) or 0 for draw.
         """
-        # Set up teams
-        team1_units, team2_units = self.set_teams(team1_units, team2_units)
         
         self.combat_log.clear()
         self.action_queue.clear()
@@ -113,7 +123,7 @@ class CombatEngine:
         while self.frame_number < self.max_frames:
             
             # Get all living units
-            all_units = [u for u in team1_units + team2_units if u.is_alive()]
+            all_units = [u for u in self.player1.units_on_board + self.player2.units_on_board if u.is_alive()]
             
             if not all_units:
                 break
@@ -128,11 +138,11 @@ class CombatEngine:
                 return 1  # Team 1 wins
             
             # Execute frame with delayed actions
-            self._execute_delayed_frame(all_units)
+            self._execute_delayed_frame()
         
         # Timeout - determine winner by remaining health
-        team1_health = sum(u.current_health for u in team1_units if u.is_alive())
-        team2_health = sum(u.current_health for u in team2_units if u.is_alive())
+        team1_health = sum(u.current_health for u in self.player1.units_on_board if u.is_alive())
+        team2_health = sum(u.current_health for u in self.player2.units_on_board if u.is_alive())
         
         if team1_health > team2_health:
             return 1
@@ -142,7 +152,7 @@ class CombatEngine:
             return 0  # Draw
             
 
-    def _execute_delayed_frame(self, all_units: List[Unit]):
+    def _execute_delayed_frame(self):
         """
         Execute one frame with delayed action resolution.
         """
@@ -150,6 +160,7 @@ class CombatEngine:
 
         # Sort units by position for consistent processing order. 
         # TODO: optimize by only sorting when necessary (when units move or are added).
+        all_units = [u for u in self.player1.units_on_board + self.player2.units_on_board if u.is_alive()]
         all_units.sort(key=lambda u: (u.position[0]*self.board.size[1] + u.position[1]) if u.position else float('inf'))
 
         # Phase 1: Execute actions that are ready this frame

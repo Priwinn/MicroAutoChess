@@ -29,10 +29,10 @@ class Player:
     shop_units: List[Unit] = field(default_factory=list)
     rerolls_this_turn: int = 0
     
-    def __post_init__(self):
-        """Initialize player with starting shop."""
-        if not self.shop_units:
-            self._generate_shop()
+    # def __post_init__(self):
+    #     """Initialize player with starting shop."""
+    #     if not self.shop_units:
+    #         self._generate_shop()
     
     def _generate_shop(self):
         """Generate shop units based on player level."""

@@ -32,7 +32,7 @@ class AbstractSpell:
     def description(self):
         return "No description available."
     
-    def reset(self):
+    def round_reset(self):
         """Reset any spell-specific state if needed."""
         self.target = None
         self.target_position = None
@@ -219,9 +219,9 @@ class AssassinBlinkSpell(AbstractSpell):
     def description(self):
         return f"Blinks to the weakest enemy within {self.range} cells and deals {self.damage * self.spell_power} physical damage. Range increases by 1 each cast."
 
-    def reset(self):
+    def round_reset(self):
         """Reset any spell-specific state if needed."""
-        super().reset()
+        super().round_reset()
         self.range = 3  # Reset range to initial value
 
 class AttackSpeedBuffSpell(AbstractSpell):

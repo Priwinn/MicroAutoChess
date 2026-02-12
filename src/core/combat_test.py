@@ -10,6 +10,7 @@ from constant_types import CombatEventType
 from units import Unit, UnitType, UnitRarity, UnitStats
 from board import Board, HexBoard
 from combat import CombatEngine, CombatEvent, CombatAction
+from player import Player
 import time
 
 
@@ -108,6 +109,12 @@ def setup_combat_scenario(debug: bool = False):
     
     # Create units
     team1_units, team2_units = create_mock_units()
+
+    # Create players and assign units on board
+    player1 = Player(player_id=1)
+    player1.units_on_board = team1_units
+    player2 = Player(player_id=2)
+    player2.units_on_board = team2_units
     
     # Position Team 1 units (top side)
     board.place_unit(team1_units[0], (3, 3))  # Warrior front
@@ -122,13 +129,13 @@ def setup_combat_scenario(debug: bool = False):
     board.place_unit(team2_units[3], (5, 5))  # Assassin second line
     board.place_unit(team2_units[1], (6, 7))  # Archer back
     
-    return board, team1_units, team2_units
+    return board, player1, player2
 
 def run_combat_demonstration(debug: bool = False, combat_seed: int = 42):
     """Run the complete combat demonstration."""
     
     # Setup
-    board, team1_units, team2_units = setup_combat_scenario(debug=debug)
+    board, player1, player2 = setup_combat_scenario(debug=debug)
     visualizer = CombatVisualizer(board)
     
     # Show initial setup
@@ -140,14 +147,14 @@ def run_combat_demonstration(debug: bool = False, combat_seed: int = 42):
         print("- Warrior: High health, melee range (1), balanced damage")
         print("- Archer: Lower health, ranged (3), good damage")
         
-        visualizer.print_unit_stats(team1_units, "Team 1")
-        visualizer.print_unit_stats(team2_units, "Team 2")
+        visualizer.print_unit_stats(player1.units_on_board, "Team 1")
+        visualizer.print_unit_stats(player2.units_on_board, "Team 2")
     
     
     # Create combat engine and simulate
-    combat_engine = CombatEngine(board, combat_seed=combat_seed)
+    combat_engine = CombatEngine(board, player1, player2, combat_seed=combat_seed)
 
-    winner = combat_engine.simulate_combat(team1_units, team2_units)
+    winner = combat_engine.simulate_combat()
 
     # Show results
     if debug:
@@ -155,8 +162,8 @@ def run_combat_demonstration(debug: bool = False, combat_seed: int = 42):
         print("COMBAT COMPLETE!")
         print("=" * 60)
         visualizer.print_board("Final Board State")
-        visualizer.print_unit_stats(team1_units, "Team 1 (Final)")
-        visualizer.print_unit_stats(team2_units, "Team 2 (Final)")
+        visualizer.print_unit_stats(player1.units_on_board, "Team 1 (Final)")
+        visualizer.print_unit_stats(player2.units_on_board, "Team 2 (Final)")
     
     # Combat summary
     summary = combat_engine.get_combat_summary()
@@ -196,41 +203,38 @@ def interactive_step_by_step():
     print("INTERACTIVE STEP-BY-STEP DEMO")
     print("=" * 60)
     
-    board, team1_units, team2_units = setup_combat_scenario()
+    board, player1, player2 = setup_combat_scenario()
     visualizer = CombatVisualizer(board)
-    combat_engine = CombatEngine(board, combat_seed=42)
+    combat_engine = CombatEngine(board, player1, player2, combat_seed=42)
     
     visualizer.print_board("Starting Positions")
-    visualizer.print_unit_stats(team1_units, "Team 1")
-    visualizer.print_unit_stats(team2_units, "Team 2")
+    visualizer.print_unit_stats(player1.units_on_board, "Team 1")
+    visualizer.print_unit_stats(player2.units_on_board, "Team 2")
     
-    frame_num = 0
     max_frames = 500
-    
-    while frame_num < max_frames:
-        frame_num += 1
-        
+
+    while combat_engine.frame_number < max_frames:
+        frame_num = combat_engine.frame_number + 1
+
         # Check win conditions
-        team1_alive = any(u.is_alive() for u in team1_units)
-        team2_alive = any(u.is_alive() for u in team2_units)
-        
+        team1_alive = any(u.is_alive() for u in player1.units_on_board)
+        team2_alive = any(u.is_alive() for u in player2.units_on_board)
+
         if not team1_alive:
-            print(f"\n🏆 Team 2 Wins after {frame_num-1} frames!")
+            print(f"\n🏆 Team 2 Wins after {combat_engine.frame_number} frames!")
             break
         if not team2_alive:
-            print(f"\n🏆 Team 1 Wins after {frame_num-1} frames!")
+            print(f"\n🏆 Team 1 Wins after {combat_engine.frame_number} frames!")
             break
-        
+
         print(f"\n{'='*20} frame {frame_num} {'='*20}")
         input("Press Enter to execute this frame...")
-        
+
         # Execute one frame
-        all_units = [u for u in team1_units + team2_units if u.is_alive()]
-        combat_engine.frame_number = frame_num
-        combat_engine._execute_delayed_frame(all_units)
-        
+        combat_engine._execute_delayed_frame()
+
         # Show results
-        visualizer.print_board(f"After frame {frame_num}")
+        visualizer.print_board(f"After frame {combat_engine.frame_number}")
         
         # Show what happened this frame
         frame_events = [e for e in combat_engine.combat_log if e.frame_number == frame_num]
@@ -247,8 +251,8 @@ def interactive_step_by_step():
                     print(f"  💀 {event.description}")
         
         # Show current unit status
-        visualizer.print_unit_stats(team1_units, "Team 1")
-        visualizer.print_unit_stats(team2_units, "Team 2")
+        visualizer.print_unit_stats(player1.units_on_board, "Team 1")
+        visualizer.print_unit_stats(player2.units_on_board, "Team 2")
     
     print("\nInteractive demo completed!")
 

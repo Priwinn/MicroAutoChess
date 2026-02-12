@@ -909,53 +909,14 @@ class PygameBoardVisualizer:
         cur_y = cy1 + (cy2 - cy1) * t
         attack_anims.append((action, cx1, cy1, cur_x, cur_y, t))
 
-    def _collect_spell_projectile(self, action, sim_frame: int, sim_progress: float, spell_projectiles: list):
-        """Append projectile animations for certain spell casts (e.g., Fireball)."""
-        if getattr(action, 'spell_instance', None) is None:
-            return
-        spell_name = getattr(action.spell_instance, 'name', None)
-        if spell_name not in ('Fireball', 'Spin Slash'):
-            return
-        if getattr(action, 'start_position', None) is None:
-            return
-        if getattr(action, 'resolution_frame', 0) <= sim_frame:
-            return
-        start_f = action.planned_frame
-        end_f = action.resolution_frame
-        denom = max(1, end_f - start_f)
-        t = (sim_frame + sim_progress - start_f) / denom
-        t = max(0.0, min(1.0, t))
-
-        x1, y1 = self.board.coord_to_pixel(action.start_position, self.cell_radius)
-        cx1 = x1 + self.left_offset + self.margin
-        cy1 = y1 + self.margin + self.cell_radius + 4
-
-        target_pos = None
-        if getattr(action, 'target', None) and getattr(action.target, 'position', None):
-            target_pos = action.target.position
-        elif getattr(action, 'target_position', None):
-            target_pos = action.target_position
-
-        if target_pos is None:
-            return
-
-        x2, y2 = self.board.coord_to_pixel(target_pos, self.cell_radius)
-        cx2 = x2 + self.left_offset + self.margin
-        cy2 = y2 + self.margin + self.cell_radius + 4
-
-        cur_x = cx1 + (cx2 - cx1) * t
-        cur_y = cy1 + (cy2 - cy1) * t
-        spell_projectiles.append((action, cx1, cy1, cx2, cy2, cur_x, cur_y, t))
-
     def _collect_cast_spell_animation(self, action, sim_frame: int, sim_progress: float, spell_projectiles: list):
         """Generic CAST_SPELL visual helper: query spell instance for projectile descriptor and append projectile tuple."""
         desc = None
         if getattr(action, 'spell_instance', None) is not None:
-            try:
-                desc = action.spell_instance.projectile_render_callback(action.unit, self.board)
-            except Exception:
-                desc = None
+            desc = action.spell_instance.projectile_render_callback(action.unit, self.board)
 
+        if desc is None:
+            return
         if action.start_position is None:
             return
         if getattr(action, 'resolution_frame', 0) <= sim_frame:

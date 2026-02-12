@@ -18,7 +18,7 @@ class PvERoundManager:
         self.configs: List[Any] = configs
 
         # store player's initial units snapshot for resets
-        self.initial_player = None
+        self.initial_player: Optional[List[Unit]] = None
         # optional stored starting positions for player and enemy units (list of (x,y))
         self.player_positions: Optional[List[Tuple[int, int]]] = None
         self.enemy_positions: Optional[List[Tuple[int, int]]] = None
@@ -102,6 +102,9 @@ class PvERoundManager:
 
         Returns (enemy_units_list, player_units_list) that were placed on board.
         """
+        # TODO: needs to behave differently on win or lose. 
+        # On win, player units should preserve any permanent stacks (not implemented yet) gained from the previous round,
+        # but on lose player should be reset to the stored snapshot. 
         board.reset_board()
 
         # prepare enemy units (fresh clones)
@@ -127,10 +130,7 @@ class PvERoundManager:
         pi = 0
         # If there are more units than positions, remaining units will be placed in first available spots.
         for u in player_units_to_place:
-            # TODO RESET SPELL PROPERLY FOR EVERY UNIT TYPE
-            # if (u.unit_type is UnitType.ASSASSIN):#
-            #     u.base_stats.spell.range = 3
-            u.base_stats.spell.reset()
+            u.round_reset()
             placed = False
             # try to place in the stored positions list first
             while pi < len(player_positions):

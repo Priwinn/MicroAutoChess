@@ -101,11 +101,11 @@ class Player:
         """Add unit to bench or board."""
         if len([u for u in self.bench.values() if u is not None]) < 8:
             self.add_unit_to_bench(unit)
-            self.check_unit_level_up()  # Check for level up after adding unit
+            # self.check_unit_level_up()  # Check for level up after adding unit
             return True
         elif len(self.units_on_board) < self.max_units_on_board:
             self.units_on_board.append(unit)
-            self.check_unit_level_up()  # Check for level up after adding unit
+            # self.check_unit_level_up()  # Check for level up after adding unit
             return True
         return False
     

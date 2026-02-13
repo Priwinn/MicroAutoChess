@@ -111,11 +111,12 @@ def main():
                             # find first empty initial cell for team 2
                             
                             target = None
-                            for i in range(board.bench_size):
-                                bunit = player2.bench.get(i)
-                                if bunit is None:
-                                    target = (-2, i)
-                                    break
+                            #Bench buying is buggy
+                            # for i in range(board.bench_size):
+                            #     bunit = player2.bench.get(i)
+                            #     if bunit is None:
+                            #         target = (-2, i)
+                            #         break
                             if target is None:
                                 valid = board.get_initial_positions(2)
                                 for pos in valid:

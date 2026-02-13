@@ -38,7 +38,7 @@ def main():
     render_fps = 60
     dt = 1/render_fps
 
-    visual = PygameBoardVisualizer(board, render_fps=render_fps, cell_radius=40)
+    visual = PygameBoardVisualizer(board, render_fps=render_fps, cell_radius=32)
     engine = CombatEngine(board, player1, player2, combat_seed=42)
 
 
@@ -109,26 +109,34 @@ def main():
                             if not paused or engine.frame_number > 0:
                                 break
                             # find first empty initial cell for team 2
-                            valid = board.get_initial_positions(2)
+                            
                             target = None
-                            for pos in valid:
-                                c = board.get_cell(pos)
-                                if c.is_empty():
-                                    target = pos
+                            for i in range(board.bench_size):
+                                bunit = player2.bench.get(i)
+                                if bunit is None:
+                                    target = (-2, i)
                                     break
+                            if target is None:
+                                valid = board.get_initial_positions(2)
+                                for pos in valid:
+                                    c = board.get_cell(pos)
+                                    if c.is_empty():
+                                        target = pos
+                                        break
                             if target is not None:
                                 # create unit and place
                                 new_u = Unit(unit_type=ut, rarity=UnitRarity.COMMON, team=2, level=1)
-                                new_u.current_health = new_u.get_max_health()
-                                new_u.current_mana = 0
                                 board.place_unit(new_u, target)
+                                
                                 player2.units_on_board.append(new_u)
+                                #TODO:synchronize bench changes with engine player2 units list and engine teams. We probably should just link player to board.
+                                # player2.add_unit(new_u)
 
                                 # deduct budget from PvE manager
                                 pve_manager.player_budget = int(pve_manager.player_budget) - int(cost)
 
                                 # update engine teams
-                                engine.update_players(player1, player2)
+                                # engine.update_players(player1, player2)
 
                             # consume click
                             break
@@ -148,7 +156,17 @@ def main():
                                     drag_from = cell_pos
                                     # highlight player's placement zone while dragging
                                     visual.highlight_player_initial_zone = True
-
+                                    continue
+                        bench_cell = visual.get_bench_cell_at_pixel(event.pos)
+                        if bench_cell is not None:
+                            bteam, bindex = bench_cell
+                            if bteam == -2:
+                                bench_unit = board.get_bench_unit(-bteam, bindex)
+                                if bench_unit is not None:
+                                    dragged_unit = board.remove_bench_unit(-bteam, bindex)
+                                    dragging = True
+                                    drag_from = (bteam, bindex)
+                                    visual.highlight_player_initial_zone = True
                                     continue
 
                 elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
@@ -176,9 +194,11 @@ def main():
                                 # remove from team2 units list
                                 if dragged_unit in player2.units_on_board:
                                     player2.units_on_board.remove(dragged_unit)
+                                if drag_from[0]==-2 and dragged_unit in player2.bench.values():
+                                    player2.bench[drag_from[1]] = None
 
                                 # update engine teams
-                                engine.update_players(player1, player2)
+                                # engine.update_players(player1, player2)
                                 sold = True
 
                             if not sold:
@@ -186,33 +206,50 @@ def main():
                                 target = visual.get_cell_at_pixel(event.pos)
                                 placed = False
                                 if target is not None and board.is_valid_position(target):
-                                    # only allow placing within team 2's initial zone
-                                    valid_targets = board.get_initial_positions(2)
-                                    if target in valid_targets:
-                                        tcell = board.get_cell(target)
-                                        if tcell.is_empty():
-                                            board.place_unit(dragged_unit, target)
-                                            placed = True
-                                        else:
-                                            # If occupied by a friendly (team 2) unit, swap positions
-                                            other = tcell.unit
-                                            if getattr(other, 'team', None) == 2:
-                                                try:
-                                                    # remove the occupying unit, place dragged unit, then place the other at original slot
-                                                    other_unit = board.remove_unit(target)
-                                                    board.place_unit(dragged_unit, target)
-                                                    # place other unit back to where dragged unit came from
-                                                    board.place_unit(other_unit, drag_from)
-                                                    placed = True
-                                                    engine.update_players(player1, player2)
+                                    board.place_unit(dragged_unit, drag_from) # temporarily place back
+                                    placed = board.player_move_unit(drag_from, target, team=2)
 
-                                                except Exception:
-                                                    # fallback: return dragged unit to origin later
-                                                    placed = False
+                                    # placed = False
+                                    # if target is not None and board.is_valid_position(target):
+                                    #     # only allow placing within team 2's initial zone
+                                    #     valid_targets = board.get_initial_positions(2)
+                                    #     if target in valid_targets:
+                                    #         tcell = board.get_cell(target)
+                                    #         if tcell.is_empty():
+                                    #             board.place_board_unit(dragged_unit, target)
+                                    #             placed = True
+                                    #         else:
+                                    #             # If occupied by a friendly (team 2) unit, swap positions
+                                    #             other = tcell.unit
+                                    #             if getattr(other, 'team', None) == 2:
+                                    #                 try:
+                                    #                     # remove the occupying unit, place dragged unit, then place the other at original slot
+                                    #                     other_unit = board.remove_unit(target)
+                                    #                     board.place_board_unit(dragged_unit, target)
+                                    #                     # place other unit back to where dragged unit came from
+                                    #                     board.place_board_unit(other_unit, drag_from)
+                                    #                     placed = True
+                                    #                     # engine.update_players(player1, player2)
+
+                                    #                 except Exception:
+                                    #                     # fallback: return dragged unit to origin later
+                                    #                     placed = False
+                                #Bench cells
+                                else:
+                                    #TODO:synchronize bench changes with engine player2 units list and engine teams
+                                    #TODO:dragging from bench to board or bench
+                                    target_bench = visual.get_bench_cell_at_pixel(event.pos)
+                                    if target_bench is not None:
+                                        board.place_unit(dragged_unit, drag_from)
+                                        placed = board.player_move_unit(drag_from, target_bench, team=2)
+                                        player2.bench = board.bench_units_2
+                                        player2.units_on_board = board.get_units_by_team(2)
+
+
                                 if not placed:
                                     # return to original position
                                     board.place_unit(dragged_unit, drag_from)
-                        except Exception:
+                        except Exception as e:
                             board.place_unit(dragged_unit, drag_from)
 
                         # stop highlighting now that drag finished
@@ -239,11 +276,18 @@ def main():
 
             # when the match actually starts (unpaused at frame 0), capture player starting positions
                 if not paused and engine.frame_number == 0:
-                                    # capture current player and enemy unit starting positions
-                    pve_manager.initial_player = pve_manager._clone_unit_list(player2.units_on_board)
-                    player_positions = [u.position for u in player2.units_on_board if getattr(u, 'position', None) is not None]
-                    if player_positions:
-                        pve_manager.save_player_positions(player_positions)
+                    # Resync with board state in case player repositioned units before starting
+                    player2.units_on_board = board.get_units_by_team(2)
+                    player2.bench = board.bench_units_2
+                    for u in player2.units_on_board:
+                        u.initial_position = u.position
+                    for k,u in player2.bench.items():
+                        if u is not None:
+                            u.initial_position = (-2, k)
+                    # pve_manager.initial_player = pve_manager._clone_unit_list(player2.units_on_board)
+                    # player_positions = [u.position for u in player2.units_on_board if getattr(u, 'position', None) is not None]
+                    # if player_positions:
+                    #     pve_manager.save_player_positions(player_positions)
 
             # draw with current in-frame progress
             visual.draw_board(engine=engine, sim_frame=engine.frame_number, sim_progress=sim_progress)
@@ -269,9 +313,18 @@ def main():
                 budget_surf = visual.tooltip_font.render(f"Budget: {budget_val}", True, (240, 240, 160))
                 visual.screen.blit(budget_surf, (r0.x, r0.y - budget_surf.get_height() - 6))
 
-            # if dragging, draw the dragged unit at mouse
+            # if dragging, draw the dragged unit at mouse and snap cells on board or bench
             if 'dragging' in locals() and dragging and dragged_unit is not None:
                 mx, my = pygame.mouse.get_pos()
+                board_x, board_y = visual.get_cell_at_pixel((mx, my)) or (None, None)
+                if board_x is not None and board_y >=board.height//2:  # only snap to board if in right half (team 2 side):
+                    mx, my = visual.get_cell_center((board_x, board_y))
+                else:
+                    bench_team, bench_idx = visual.get_bench_cell_at_pixel((mx, my)) or (None, None)
+                    if bench_team == -2 and bench_idx is not None:
+                        mx, my = visual.get_bench_cell_center((bench_team, bench_idx))
+
+
                 # draw ghost circle + symbol
                 team = getattr(dragged_unit, 'team', 0)
                 color = visual.team_colors.get(team, (200, 200, 200))
@@ -358,17 +411,14 @@ def main():
                     advanced = pve_manager.advance_round()
                     if advanced:
                         # apply next round: place new enemy config, keep player's current units
-                        team1_units, team2_units = pve_manager.apply_round_to_board(board, player_units=player2.units_on_board, reset_player=True)
-                        # update player objects with new lists
-                        player1.units_on_board = team1_units
-                        player2.units_on_board = team2_units
+                        player1, player2 = pve_manager.apply_round_to_board(board, player1, player2)
                         engine = CombatEngine(board, player1, player2, combat_seed=42)
                         # restart paused at beginning of next round
                         paused = True
                         sim_progress = 0.0
                         continue
                     else:
-                        # no more rounds -> show magnificent win screen then exit
+                        # no more rounds -> show magnificent win screen then reset to first round
                         display_win_screen(visual)
                         pve_manager = PvERoundManager(configs=round_configs)
                         board, team1_units, team2_units = pve_manager.setup_round()
@@ -384,10 +434,7 @@ def main():
 
                 else:
                     # player lost -> reset to round initial configuration and restore player's units
-                    team1_units, team2_units = pve_manager.apply_round_to_board(board, player_units=None, reset_player=True)
-                    # update players
-                    player1.units_on_board = team1_units
-                    player2.units_on_board = team2_units
+                    player1, player2 = pve_manager.apply_round_to_board(board, player1, player2)
                     engine = CombatEngine(board, player1, player2, combat_seed=42)
                     paused = True
                     sim_progress = 0.0

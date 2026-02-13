@@ -1,7 +1,7 @@
 import math
 import random
 import pygame
-from typing import Tuple
+from typing import Tuple, List
 from collections import defaultdict
 from combat import CombatEngine
 from constant_types import CombatAction, CombatEventType
@@ -29,8 +29,9 @@ class PygameBoardVisualizer:
         orig_cell = cell_radius
         est_right = max(320, int(orig_cell * 6))
         est_bottom = max(60, int(orig_cell * 1.0))
+        #TODO:Estimate changes for square board type (currently using hex-based estimates)
         est_w = int(orig_cell * math.sqrt(3) * (self.board.width + 0.5)) + margin * 2 + est_right
-        est_h = int(orig_cell * 1.5 * (self.board.height + 1)) + margin * 2 + est_bottom
+        est_h = int(orig_cell * 1.5 * (self.board.height + 3)) + margin * 2 + est_bottom
 
         # Compute scale factor to fit the board into the desired window
         scale = min(float(desired_w) / max(1, est_w), float(desired_h) / max(1, est_h))
@@ -40,6 +41,8 @@ class PygameBoardVisualizer:
 
         # Apply scale to cell radius and use that for layout
         self.cell_radius = max(10, int(orig_cell * scale))
+        self.bench_gap = self.cell_radius *2
+        self.top_margin = margin + self.bench_gap
         self.margin = margin
         self.bg_color = (30, 30, 30)
         self.grid_color = (80, 80, 80)
@@ -241,7 +244,7 @@ class PygameBoardVisualizer:
                 for p in positions:
                     px, py = self.board.coord_to_pixel(p, self.cell_radius)
                     center_x = int(px + self.left_offset + self.margin)
-                    center_y = int(py + self.margin + self.cell_radius + 4)
+                    center_y = int(py + self.top_margin + self.cell_radius + 4)
                     corners = self.board.get_cell_corners((center_x, center_y), self.cell_radius)
                     pygame.draw.polygon(surf, (color[0], color[1], color[2], alpha), corners)
                 self.screen.blit(surf, (0, 0))
@@ -380,6 +383,68 @@ class PygameBoardVisualizer:
                 self.screen.blit(fill_surf, frect)
                 remaining.append([x0, y0, txt, start, duration, vx, vy, txt_color])
         self.floating_texts = remaining
+    
+    def get_bench_cell_corners(self, position: Tuple[int, int], cell_radius: int = 50) -> List[Tuple[int, int]]:
+        """Get pixel coordinates of the corners of a cell for visualization. Input is cell center pixel position and cell radius in pixels."""
+        x, y = position
+        top_left = (int(x + cell_radius / math.sqrt(2)), int(y + cell_radius / math.sqrt(2)))
+        top_right = (int(x - cell_radius / math.sqrt(2)), int(y + cell_radius / math.sqrt(2)))
+        bottom_right = (int(x - cell_radius / math.sqrt(2)), int(y - cell_radius / math.sqrt(2)))
+        bottom_left = (int(x + cell_radius / math.sqrt(2)), int(y - cell_radius / math.sqrt(2)))
+        
+        return [top_left, top_right, bottom_right, bottom_left]
+    
+    def _draw_bench_cells(self):
+                # Precompute column center X positions (align bench cells to columns)
+        col_centers = [int(i*self.cell_radius*1.5 + self.left_offset + self.margin) for i in range(self.board.bench_size)]
+
+
+        # Compute top/bottom bench Y positions based on first/last row centers
+        _, first_py = self.board.coord_to_pixel((0, 0), self.cell_radius)
+        first_center_y = int(first_py + self.top_margin + self.cell_radius + 4)
+        _, last_py = self.board.coord_to_pixel((0, self.board.height - 1), self.cell_radius)
+        last_center_y = int(last_py + self.top_margin + self.cell_radius + 4)
+        
+
+
+        top_bench_y = first_center_y - self.bench_gap
+        bottom_bench_y = last_center_y + self.bench_gap
+
+        # Draw bench row for team 1 (top) and team 2 (bottom)
+        try:
+            bench1 = getattr(self.board, 'bench_units_1', []) or []
+            bench2 = getattr(self.board, 'bench_units_2', []) or []
+        except Exception:
+            bench1 = []
+            bench2 = []
+
+        # Helper to draw a bench unit cell at given (cx, cy)
+        def _draw_bench_cell(cx, cy, unit, highlight=False):
+            corners = self.get_bench_cell_corners((cx, cy), self.cell_radius)
+            if highlight:
+                pygame.draw.polygon(self.screen, (255, 255, 255), corners, 2)
+            else:
+                pygame.draw.polygon(self.screen, self.grid_color, corners, 2)
+            if unit:
+                team = getattr(unit, 'team', None)
+                color = self.team_colors.get(team, (160, 160, 160))
+                pygame.draw.circle(self.screen, color, (cx, cy), int(self.cell_radius * 0.45))
+                symbol = unit._get_unit_symbol() if hasattr(unit, '_get_unit_symbol') else '?'
+                text_surf = self.font.render(symbol, True, (255, 255, 255))
+                text_rect = text_surf.get_rect(center=(cx, cy))
+                self.screen.blit(text_surf, text_rect)
+
+        # Draw top bench (align left columns)
+        for i in range(min(len(col_centers), self.board.bench_size)):
+            cx = col_centers[i]
+            unit = bench1[i] if i < len(bench1) else None
+            _draw_bench_cell(cx, top_bench_y, unit)
+
+        # Draw bottom bench
+        for i in range(min(len(col_centers), self.board.bench_size)):
+            cx = col_centers[i]
+            unit = bench2[i] if i < len(bench2) else None
+            _draw_bench_cell(cx, bottom_bench_y, unit, highlight=self.highlight_player_initial_zone)
 
     def _draw_cells(self, highlighted_positions: set, moving_map: dict, now: float):
         """Draw board cells, unit circles, symbols and health/mana bars.
@@ -388,6 +453,7 @@ class PygameBoardVisualizer:
         moving_map: dict of unit.id -> (unit, ix, iy, action) to skip static drawing
         now: current timestamp in seconds
         """
+        self._draw_bench_cells()
         for x in range(self.board.width):
             for y in range(self.board.height):
                 cell = self.board.get_cell((x, y))
@@ -396,7 +462,7 @@ class PygameBoardVisualizer:
                 px, py = self.board.coord_to_pixel((x, y), self.cell_radius)
                 # apply left offset and margin when computing cell center
                 center_x = int(px + self.left_offset + self.margin)
-                center_y = int(py + self.margin + self.cell_radius + 4)
+                center_y = int(py + self.top_margin + self.cell_radius + 4)
 
                 corners = self.board.get_cell_corners((center_x, center_y), self.cell_radius)
                 # If highlighting is enabled and this cell is in the player's initial zone,
@@ -466,7 +532,7 @@ class PygameBoardVisualizer:
 
                 px, py = self.board.coord_to_pixel((x, y), self.cell_radius)
                 center_x = int(px + self.left_offset + self.margin)
-                center_y = int(py + self.margin + self.cell_radius + 4)
+                center_y = int(py + self.top_margin + self.cell_radius + 4)
                 dx = mx - center_x
                 dy = my - center_y
                 d2 = dx * dx + dy * dy
@@ -878,9 +944,9 @@ class PygameBoardVisualizer:
         x1, y1 = self.board.coord_to_pixel(action.start_position, self.cell_radius)
         x2, y2 = self.board.coord_to_pixel(action.target_position, self.cell_radius)
         cx1 = x1 + self.left_offset + self.margin
-        cy1 = y1 + self.margin + self.cell_radius + 4
+        cy1 = y1 + self.top_margin + self.cell_radius + 4
         cx2 = x2 + self.left_offset + self.margin
-        cy2 = y2 + self.margin + self.cell_radius + 4
+        cy2 = y2 + self.top_margin + self.cell_radius + 4
 
         ix = int(cx1 + (cx2 - cx1) * t)
         iy = int(cy1 + (cy2 - cy1) * t)
@@ -901,9 +967,9 @@ class PygameBoardVisualizer:
         x1, y1 = self.board.coord_to_pixel(action.start_position, self.cell_radius)
         x2, y2 = self.board.coord_to_pixel(action.target.position, self.cell_radius)
         cx1 = x1 + self.left_offset + self.margin
-        cy1 = y1 + self.margin + self.cell_radius + 4
+        cy1 = y1 + self.top_margin + self.cell_radius + 4
         cx2 = x2 + self.left_offset + self.margin
-        cy2 = y2 + self.margin + self.cell_radius + 4
+        cy2 = y2 + self.top_margin + self.cell_radius + 4
 
         cur_x = cx1 + (cx2 - cx1) * t
         cur_y = cy1 + (cy2 - cy1) * t
@@ -930,7 +996,7 @@ class PygameBoardVisualizer:
 
         x1, y1 = self.board.coord_to_pixel(action.start_position, self.cell_radius)
         cx1 = x1 + self.left_offset + self.margin
-        cy1 = y1 + self.margin + self.cell_radius + 4
+        cy1 = y1 + self.top_margin + self.cell_radius + 4
 
         target_pos = None
         if getattr(action, 'target', None) and getattr(action.target, 'position', None):
@@ -943,7 +1009,7 @@ class PygameBoardVisualizer:
 
         x2, y2 = self.board.coord_to_pixel(target_pos, self.cell_radius)
         cx2 = x2 + self.left_offset + self.margin
-        cy2 = y2 + self.margin + self.cell_radius + 4
+        cy2 = y2 + self.top_margin + self.cell_radius + 4
 
         cur_x = cx1 + (cx2 - cx1) * t
         cur_y = cy1 + (cy2 - cy1) * t
@@ -991,7 +1057,7 @@ class PygameBoardVisualizer:
                 return
             px, py = self.board.coord_to_pixel(src.position, self.cell_radius)
             cx = int(px + self.left_offset + self.margin)
-            cy = int(py + self.margin + self.cell_radius + 4)
+            cy = int(py + self.top_margin + self.cell_radius + 4)
             base_color = desc.get('base_color_hint') or self.team_colors.get(getattr(src, 'team', None), (200, 200, 50))
             num_particles = desc.get('num', 20)
             lifetime_range = desc.get('lifetime_range', (0.5, 1.2))
@@ -1025,7 +1091,7 @@ class PygameBoardVisualizer:
             return
         px, py = self.board.coord_to_pixel(pos, self.cell_radius)
         cx = int(px + self.left_offset + self.margin)
-        cy = int(py + self.margin + self.cell_radius + 4)
+        cy = int(py + self.top_margin + self.cell_radius + 4)
         txt = str(int(ev.damage)) + ("*" if getattr(ev, 'crit_bool', False) else "")
         x0 = cx
         y0 = cy - int(self.cell_radius * 0.8)
@@ -1049,7 +1115,7 @@ class PygameBoardVisualizer:
         """Return pixel center (x,y) for a board cell position (x,y)."""
         px, py = self.board.coord_to_pixel(position, self.cell_radius)
         center_x = int(px + self.left_offset + self.margin)
-        center_y = int(py + self.margin + self.cell_radius + 4)
+        center_y = int(py + self.top_margin + self.cell_radius + 4)
         return center_x, center_y
 
     def get_cell_at_pixel(self, pixel: Tuple[int, int]) -> Tuple[int, int]:
@@ -1074,3 +1140,33 @@ class PygameBoardVisualizer:
         if closest_d <= (self.cell_radius * 0.9) ** 2:
             return closest
         return None
+    
+    def get_bench_cell_at_pixel(self, pixel: Tuple[int, int]) -> Tuple[int, int] | None: 
+        """Return bench cell index under given pixel coords, or None if none."""
+        mx, my = pixel
+        col_centers = [int(i*self.cell_radius*1.5 + self.left_offset + self.margin) for i in range(self.board.bench_size)]
+        row_center1 = self.margin + self.cell_radius + 4 
+        row_center2 = self.top_margin + 1.5*self.cell_radius + 4 + int(self.cell_radius * 1.5 * self.board.height) 
+        if abs(my - row_center1) < self.cell_radius * 0.8:
+            for i, col_center in enumerate(col_centers):
+                if abs(mx - col_center) < self.cell_radius * 0.8:
+                    return (-1, i)
+        elif abs(my - row_center2) < self.cell_radius * 0.8:
+            for i, col_center in enumerate(col_centers):
+                if abs(mx - col_center) < self.cell_radius * 0.8:
+                    return (-2, i)
+        return None
+    
+    def get_bench_cell_center(self, bench_index: Tuple[int, int]) -> Tuple[int, int] | None:
+        """Return pixel center (x,y) for a bench cell index (row, col), or None if invalid."""
+        row, col = bench_index
+        if row not in (-1, -2):
+            return None
+        if col < 0 or col >= self.board.bench_size:
+            return None
+        center_x = int(col * self.cell_radius * 1.5 + self.left_offset + self.margin)
+        if row == -1:
+            center_y = self.margin + self.cell_radius + 4 
+        else:
+            center_y = self.top_margin + 1.5*self.cell_radius + 4 + int(self.cell_radius * 1.5 * self.board.height) 
+        return center_x, center_y

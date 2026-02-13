@@ -65,9 +65,10 @@ class Unit:
     
     level: int = 1
     position: Optional[tuple] = None
+    initial_position: Optional[tuple] = None # Store initial position for resets
     planned_position: Optional[tuple] = None  # Position planned for next move
     current_health: float = None
-    current_mana: float = 0
+    current_mana: float = None
     
     basic_attack_mana: float = 10
     cost : int = 1
@@ -88,6 +89,8 @@ class Unit:
         
         if self.current_health is None:
             self.current_health = self.get_max_health()
+        if self.current_mana is None:
+            self.current_mana = self.base_stats.initial_mana
         # TODO UPDATE SPELL STATS LIVE INSTEAD
         self.base_stats.spell.spell_power = self.base_stats.spell_power
         self.id = next(self._ids)
@@ -299,4 +302,5 @@ class Unit:
         self.current_target = None
         self.basic_attack_overflow = 0.0
         self.base_stats.spell.round_reset()
+        self.position = self.initial_position
 

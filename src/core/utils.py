@@ -16,7 +16,7 @@ def setup_board_from_dict(board_size, unit_dict: Dict[Tuple[int, int], UnitType]
         if board.is_empty(position):
             try:
                 unit = Unit(unit_type=unit_type, rarity=UnitRarity.COMMON, team=1, level=1)
-                board.place_unit(unit, position)
+                board.place_board_unit(unit, position)
                 team1_units.append(unit)
             except Exception as e:
                 raise RuntimeError(f"Failed to place unit {unit.unit_type.value} at {position}: {e}")
@@ -58,7 +58,7 @@ def place_units_from_config(board: Board, config: Dict[str, Any], team: int = 1)
         if board.is_empty(position):
             try:
                 unit = Unit(unit_type=unit_type, rarity=UnitRarity.COMMON, team=team, level=1)
-                board.place_unit(unit, position)
+                board.place_board_unit(unit, position)
                 placed_units.append(unit)
             except Exception as e:
                 raise RuntimeError(f"Failed to place unit {unit.unit_type.value} at {position}: {e}")

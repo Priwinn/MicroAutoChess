@@ -93,11 +93,11 @@ class CombatEngine:
         for unit in self.player2.units_on_board:
             unit.team = 2
     
-    def update_players(self, player1: Player, player2: Player):
-        """Update player objects after combat, syncing health and units on board."""
-        self.player1 = player1
-        self.player2 = player2
-        self.set_teams()
+    # def update_players(self, player1: Player, player2: Player):
+    #     """Update player objects."""
+    #     self.player1 = player1
+    #     self.player2 = player2
+    #     self.set_teams()
     
     def simulate_combat(self) -> int:
         """

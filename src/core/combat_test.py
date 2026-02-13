@@ -117,17 +117,17 @@ def setup_combat_scenario(debug: bool = False):
     player2.units_on_board = team2_units
     
     # Position Team 1 units (top side)
-    board.place_unit(team1_units[0], (3, 3))  # Warrior front
-    board.place_unit(team1_units[2], (2, 3))  # Tank front
-    board.place_unit(team1_units[3], (1, 2))  # Assassin second line
-    board.place_unit(team1_units[1], (0, 0))  # Archer back
+    board.place_board_unit(team1_units[0], (3, 3))  # Warrior front
+    board.place_board_unit(team1_units[2], (2, 3))  # Tank front
+    board.place_board_unit(team1_units[3], (1, 2))  # Assassin second line
+    board.place_board_unit(team1_units[1], (0, 0))  # Archer back
 
     
     # Position Team 2 units (bottom side)
-    board.place_unit(team2_units[0], (3, 4))  # Warrior front
-    board.place_unit(team2_units[2], (4, 4))  # Tank front
-    board.place_unit(team2_units[3], (5, 5))  # Assassin second line
-    board.place_unit(team2_units[1], (6, 7))  # Archer back
+    board.place_board_unit(team2_units[0], (3, 4))  # Warrior front
+    board.place_board_unit(team2_units[2], (4, 4))  # Tank front
+    board.place_board_unit(team2_units[3], (5, 5))  # Assassin second line
+    board.place_board_unit(team2_units[1], (6, 7))  # Archer back
     
     return board, player1, player2
 

@@ -22,7 +22,7 @@ class Player:
     max_units_on_board: int = 1
     
     # Units
-    bench: List[Unit] = field(default_factory=list)
+    bench: Dict[int, Optional[Unit]] = field(default_factory=lambda: {i:None for i in range(9)})
     units_on_board: List[Unit] = field(default_factory=list)
     
     # Shop
@@ -69,11 +69,11 @@ class Player:
         if self.gold < cost:
             return False
         
-        if len(self.bench) >= 8:  # Max bench size
+        if len([u for u in self.bench.values() if u is not None]) >= 9:  # Max bench size
             return False
         
         self.gold -= cost
-        self.bench.append(unit)
+        self.add_unit_to_bench(unit)
         self.shop_units[shop_index] = None  # Remove from shop
         return True
     
@@ -89,10 +89,18 @@ class Player:
             return True
         return False
     
+    def add_unit_to_bench(self, unit: Unit) -> bool:
+        """Add unit to bench if space is available."""
+        for i in range(8):
+            if self.bench[i] is None:
+                self.bench[i] = unit
+                return True
+        return False
+    
     def add_unit(self, unit: Unit) -> bool:
         """Add unit to bench or board."""
-        if len(self.bench) < 8:
-            self.bench.append(unit)
+        if len([u for u in self.bench.values() if u is not None]) < 8:
+            self.add_unit_to_bench(unit)
             self.check_unit_level_up()  # Check for level up after adding unit
             return True
         elif len(self.units_on_board) < self.max_units_on_board:
@@ -103,10 +111,11 @@ class Player:
     
     def remove_unit(self, unit: Unit) -> bool:
         """Remove unit from bench or board."""
-        if unit in self.bench:
-            self.bench.remove(unit)
-            return True
-        elif unit in self.units_on_board:
+        for i in range(8):
+            if self.bench[i] is unit:
+                self.bench[i] = None
+                return True
+        if unit in self.units_on_board:
             self.units_on_board.remove(unit)
             return True
         return False
@@ -136,7 +145,9 @@ class Player:
         unit_counts: Dict[str, List[Unit]] = {}
         
         # Count units on bench and board
-        for unit in self.bench + self.units_on_board:
+        for unit in list(self.bench.values()) + self.units_on_board:
+            if unit is None:
+                continue
             key = f"{unit.unit_type}_{unit.rarity}"
             if key not in unit_counts:
                 unit_counts[key] = []

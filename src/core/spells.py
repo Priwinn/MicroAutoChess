@@ -29,7 +29,7 @@ class AbstractSpell:
     def __str__(self):
         return f"{self.name} Spell"
 
-    def description(self):
+    def description(self) -> str:
         return "No description available."
     
     def round_reset(self):
@@ -37,13 +37,18 @@ class AbstractSpell:
         self.target = None
         self.target_position = None
 
-    def projectile_render_callback(self, source, board):
+    def projectile_render_callback(self, source, board) -> Optional[Dict[str, Any]]:
         """Callback for rendering projectile animation if applicable."""
         return None
 
-    def on_hit_render_callback(self, source, board):
+    def on_hit_render_callback(self, source, board) -> Optional[Dict[str, Any]]:
         """Callback for rendering on-hit animation if applicable."""
         return None
+    
+    def update_level(self, new_level: int):
+        """Update spell attributes based on the new level of the caster."""
+        # This method can be overridden by specific spells to scale with caster level
+        pass
 
 
 class FireballSpell(AbstractSpell):
@@ -81,8 +86,8 @@ class FireballSpell(AbstractSpell):
         else:
             print(f"Target {self.target.unit_type.value} is already defeated.")
 
-    def description(self):
-        return f"Deals {self.damage * self.spell_power} magical damage to a target and {self.damage/2 * self.spell_power} damage to adjacent enemies."
+    def description(self) -> str:
+        return f"Deals {int(self.damage * self.spell_power)} magical damage to a target and {int(self.damage/2 * self.spell_power)} damage to adjacent enemies."
     def projectile_render_callback(self, source, board):
         # Return a lightweight descriptor for visualizer to render a projectile
         return {
@@ -100,6 +105,9 @@ class FireballSpell(AbstractSpell):
             'duration': 0.6,
             'color_hint': None,  # visualizer will prefer team color when provided
         }
+    
+    def update_level(self, new_level: int):
+        self.damage = 250 + (new_level - 1) * 125  # Increase damage by 100 per level
 
 class SpinSlashSpell(AbstractSpell):
     def __init__(self):
@@ -122,18 +130,10 @@ class SpinSlashSpell(AbstractSpell):
                 damage_obj = Damage(value=damage, crit=(can_crit and crit_roll < crit_rate), dmg_type=DamageType.PHYSICAL, frame_number=frame_number)
                 cell.unit.take_damage(damage_obj, source=source, spell_name=self.name)
 
-    def description(self):
-        return f"Deals {self.damage * self.spell_power} physical damage to all adjacent enemy units."
-    def projectile_render_callback(self, source, board):
-        # Spin slash doesn't have a projectile, but provide a short-range projectile-like visual
-        return {
-            'type': 'projectile',
-            'id': 'SpinSlash',
-            'color_hint': (220, 120, 40),
-            'glow': False,
-        }
+    def description(self) -> str:
+        return f"Deals {int(self.damage * self.spell_power)} physical damage to all adjacent enemy units."
 
-    def on_hit_render_callback(self, source, board):
+    def on_hit_render_callback(self, source, board) -> Optional[Dict[str, Any]]:
         # Spin slash also produces an AoE effect around caster
         return {
             'type': 'aoe',
@@ -141,6 +141,9 @@ class SpinSlashSpell(AbstractSpell):
             'duration': 0.45,
             'color_hint': None,
         }
+    
+    def update_level(self, new_level: int):
+        self.damage = 100 + (new_level - 1) * 50  # Increase damage by 50 per level
 
 class SelfHealSpell(AbstractSpell):
     def __init__(self):
@@ -163,8 +166,11 @@ class SelfHealSpell(AbstractSpell):
         else:
             print(f"Target {self.target.unit_type.value} is already defeated.")
 
-    def description(self):
-        return f"Heals the caster for {self.heal_amount * self.spell_power} health."
+    def description(self) -> str:
+        return f"Heals the caster for {int(self.heal_amount * self.spell_power)} health."
+    
+    def update_level(self, new_level: int):
+        self.heal_amount = 100 + (new_level - 1) * 50  # Increase heal by 50 per level
 
 class AssassinBlinkSpell(AbstractSpell):
     """Teleport the assassin to the weakest enemy unit within 2 cells (note range is l2, hexes is l1). Increase range each cast."""
@@ -216,13 +222,16 @@ class AssassinBlinkSpell(AbstractSpell):
         # print(f"{source.unit_type.value} blinked to {weakest_enemy.unit_type.value}'s position at {weakest_enemy.position}.")
         self.range += 1  # Increase range for next blink
     
-    def description(self):
-        return f"Blinks to the weakest enemy within {self.range} cells and deals {self.damage * self.spell_power} physical damage. Range increases by 1 each cast."
+    def description(self) -> str:
+        return f"Blinks to the weakest enemy within {self.range} cells and deals {int(self.damage * self.spell_power)} physical damage. Range increases by 1 each cast."
 
     def round_reset(self):
         """Reset any spell-specific state if needed."""
         super().round_reset()
         self.range = 3  # Reset range to initial value
+
+    def update_level(self, new_level: int):
+        self.damage = 100 + (new_level - 1) * 50  # Increase damage by 50 per level
 
 class AttackSpeedBuffSpell(AbstractSpell):
     def __init__(self):
@@ -244,8 +253,8 @@ class AttackSpeedBuffSpell(AbstractSpell):
         else:
             print(f"Target {self.target.unit_type.value} is already defeated.")
 
-    def description(self):
-        return f"Increases the caster's attack speed by {self.buff_amount * 100}%. Stacks with multiple casts."
+    def description(self) -> str:
+        return f"Increases the caster's attack speed by {self.buff_amount * 100:.1f}%. Stacks with multiple casts."
     def on_hit_render_callback(self, source, board):
         # Return particle burst descriptor used by visualizer to spawn particles
         return {
@@ -256,6 +265,9 @@ class AttackSpeedBuffSpell(AbstractSpell):
             'size_range': (4, 7),
             'speed_mult_range': (0.8, 2.2),
         }
+    
+    def update_level(self, new_level: int):
+        self.buff_amount = 0.25 + (new_level - 1) * 0.025  # Increase buff by 2.5% per level
 
 
 # Simple factory to get spell instances by name for visualizer/event handling

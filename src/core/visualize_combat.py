@@ -145,8 +145,8 @@ def main():
                             break
                     # If combat hasn't started (frame 0) and paused, allow dragging units
                     if paused and engine.frame_number == 0:
-                        cell_pos = visual.get_cell_at_pixel(event.pos)
-                        if cell_pos is not None:
+                        cell_pos = visual.get_pos_at_pixel(event.pos)
+                        if cell_pos is not None and cell_pos[0] >= 0:
                             cell = board.get_cell(cell_pos)
                             # Only allow dragging units that belong to player (team 2)
                             # and that are located in team 2's initial placement zone
@@ -160,7 +160,7 @@ def main():
                                     # highlight player's placement zone while dragging
                                     visual.highlight_player_initial_zone = True
                                     continue
-                        bench_cell = visual.get_bench_cell_at_pixel(event.pos)
+                        bench_cell = visual.get_bench_pos_at_pixel(event.pos)
                         if bench_cell is not None:
                             bteam, bindex = bench_cell
                             if bteam == -2:
@@ -210,7 +210,7 @@ def main():
 
                             if not sold:
                                 # normal placement: try to place in a valid team 2 initial cell
-                                target = visual.get_cell_at_pixel(event.pos)
+                                target = visual.get_pos_at_pixel(event.pos)
                                 placed = False
                                 if target is not None and board.is_valid_position(target):
                                     board.place_unit(dragged_unit, drag_from) # temporarily place back
@@ -246,7 +246,7 @@ def main():
                                 else:
                                     #TODO:synchronize bench changes with engine player2 units list and engine teams
                                     #TODO:dragging from bench to board or bench
-                                    target_bench = visual.get_bench_cell_at_pixel(event.pos)
+                                    target_bench = visual.get_bench_pos_at_pixel(event.pos)
                                     if target_bench is not None:
                                         board.place_unit(dragged_unit, drag_from)
                                         placed = board.player_move_unit(drag_from, target_bench, team=2)
@@ -322,11 +322,11 @@ def main():
             # if dragging, draw the dragged unit at mouse and highlight hovering cell if valid
             if 'dragging' in locals() and dragging and dragged_unit is not None:
                 mx, my = pygame.mouse.get_pos()
-                board_x, board_y = visual.get_cell_at_pixel((mx, my)) or (None, None)
+                board_x, board_y = visual.get_pos_at_pixel((mx, my)) or (None, None)
                 if board_x is not None and board_y >=board.height//2:  # only snap to board if in right half (team 2 side):
                     visual.highlight_hovered_cell = (board_x, board_y)
                 else:
-                    bench_team, bench_idx = visual.get_bench_cell_at_pixel((mx, my)) or (None, None)
+                    bench_team, bench_idx = visual.get_bench_pos_at_pixel((mx, my)) or (None, None)
                     if bench_team == -2 and bench_idx is not None:
                         visual.highlight_hovered_cell = (-2, bench_idx)
                     else:

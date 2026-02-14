@@ -93,6 +93,7 @@ class Unit:
             self.current_mana = self.base_stats.initial_mana
         # TODO UPDATE SPELL STATS LIVE INSTEAD
         self.base_stats.spell.spell_power = self.base_stats.spell_power
+        
         self.id = next(self._ids)
     
     def _get_default_stats(self) -> UnitStats:
@@ -300,6 +301,7 @@ class Unit:
         """Level up the unit."""
         self.level += 1
         self.current_health = self.get_max_health()
+        self.base_stats.spell.update_level(self.level)
 
     def __str__(self):
         """String representation of the unit."""

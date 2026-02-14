@@ -541,33 +541,20 @@ class PygameBoardVisualizer:
     def _draw_hover_tooltip(self):
         """Show tooltip for unit under mouse, if any."""
         mx, my = pygame.mouse.get_pos()
-        closest = None
-        closest_d = float('inf')
-        hovered_unit = None
-        # find nearest cell center within reasonable radius
-        for x in range(self.board.width):
-            for y in range(self.board.height):
-                cell = self.board.get_cell((x, y))
-
-                px, py = self.board.coord_to_pixel((x, y), self.cell_radius)
-                center_x = int(px + self.left_offset + self.margin)
-                center_y = int(py + self.top_margin + self.cell_radius + 4)
-                dx = mx - center_x
-                dy = my - center_y
-                d2 = dx * dx + dy * dy
-                if d2 < closest_d:
-                    closest_d = d2
-                    closest = (center_x, center_y, cell)
-
-        if closest is not None:
-            cx, cy, cell = closest
-            # Accept hover if within cell radius
-            if closest_d <= (self.cell_radius * 0.9) ** 2 and cell is not None and getattr(cell, 'unit', None) is not None:
-                hovered_unit = cell.unit
-
-        if hovered_unit is None:
+        hovered_pos = self.get_pos_at_pixel((mx, my))
+        if hovered_pos and hovered_pos[0] < 0:
+            hovered_unit = self.board.get_bench_unit(-hovered_pos[0], hovered_pos[1])
+            if hovered_unit is None:
+                return
+        elif hovered_pos and hovered_pos[0] >= 0:
+            hovered_cell = self.board.get_cell(hovered_pos) if hovered_pos else None
+            if hovered_cell and hovered_cell.unit:
+                hovered_unit = hovered_cell.unit
+            else:
+                return
+        else:
             return
-
+            
         # Build tooltip contents: unit name (title), spell name, description, and unit health/mana
         spell = getattr(hovered_unit.base_stats, 'spell', None)
         title = hovered_unit.unit_type.value
@@ -1190,7 +1177,7 @@ class PygameBoardVisualizer:
         center_y = int(py + self.top_margin + self.cell_radius + 4)
         return center_x, center_y
 
-    def get_cell_at_pixel(self, pixel: Tuple[int, int]) -> Tuple[int, int]:
+    def get_pos_at_pixel(self, pixel: Tuple[int, int]) -> Tuple[int, int] | None:
         """Return board cell position (x,y) under given pixel coords, or None if none.
 
         Uses a simple nearest-center check within cell radius.
@@ -1211,9 +1198,10 @@ class PygameBoardVisualizer:
             return None
         if closest_d <= (self.cell_radius * 0.9) ** 2:
             return closest
-        return None
-    
-    def get_bench_cell_at_pixel(self, pixel: Tuple[int, int]) -> Tuple[int, int] | None: 
+        else:
+            return self.get_bench_pos_at_pixel(pixel)
+
+    def get_bench_pos_at_pixel(self, pixel: Tuple[int, int]) -> Tuple[int, int] | None: 
         """Return bench cell index under given pixel coords, or None if none."""
         mx, my = pixel
         col_centers = [int(i*self.cell_radius*1.5 + self.left_offset + self.margin) for i in range(self.board.bench_size)]

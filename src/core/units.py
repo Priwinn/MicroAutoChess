@@ -173,6 +173,20 @@ class Unit:
             match_id=None
         )
         global_log.combat_log.append(combat_event)
+        if self.current_health <= 0:
+            death_event = CombatEvent(
+                frame_number=damage_obj.frame_number,
+                source=source,
+                target=self,
+                event_type=CombatEventType.UNIT_DIED,
+                spell_name=spell_name if spell_name else None,
+                damage=0,
+                crit_bool=False,
+                position=self.position,
+                description=f"{self.unit_type.value} died.",
+                match_id=None
+            )
+            global_log.combat_log.append(death_event)
         return actual_damage
 
     def heal(self, damage_obj: Damage, source: 'Unit' = None, spell_name: str = "") -> None:

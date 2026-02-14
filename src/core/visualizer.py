@@ -81,6 +81,8 @@ class PygameBoardVisualizer:
         self.spin_animations = []
         # Particles for spell effects: list of [x0,y0,vx,vy,start,lifetime,color,size]
         self.particles = []
+        # Death/fade animations: list of [cx, cy, start, duration, color, radius, symbol]
+        self.death_animations = []
         # damage done per unit id
         self.damage_done = defaultdict(float)
         # smaller font for damage numbers
@@ -91,6 +93,8 @@ class PygameBoardVisualizer:
         self.unit_info = {}
         # When true, render player's initial placement cells with a highlighted border
         self.highlight_player_initial_zone = False
+        # Currently hovered cell, if placeable for player it will be highlighted yellow 
+        self.highlight_hovered_cell : Tuple[int, int] | None = None
         # Deferred tooltip surfaces to draw after UI so they appear on top
         self._deferred_tooltips: list[tuple] = []
 
@@ -128,6 +132,9 @@ class PygameBoardVisualizer:
                 # Damage / healing floating text
                 if getattr(ev, 'damage', 0) and ev.damage > 0 and id(ev) not in self._seen_events:
                     self._handle_damage_event(ev, now)
+                # Unit died -> play fade animation
+                if getattr(ev, 'event_type', None) == CombatEventType.UNIT_DIED and id(ev) not in self._seen_events:
+                    self._handle_unit_died(ev, now)
 
         # Draw each cell (but skip drawing units that are currently moving - they'll be drawn interpolated)
         # Ensure current time is available for spin/animations
@@ -146,6 +153,7 @@ class PygameBoardVisualizer:
         self._draw_attack_and_projectiles(engine, attack_anims, spell_projectiles)
         self._draw_aoe_animations(now)
         self._draw_particles(now)
+        self._draw_death_animations(now)
         self._draw_damage_charts(engine)
         self._draw_floating_texts(now)
 
@@ -155,10 +163,9 @@ class PygameBoardVisualizer:
     def _draw_moving_units(self, moving_map: dict, now: float):
         """Draw units that are currently moving (interpolated positions)."""
         for _uid, (unit, ix, iy, action) in moving_map.items():
-            team = getattr(unit, 'team', 0)
-            color = self.team_colors.get(team, (200, 200, 200))
-            pygame.draw.circle(self.screen, color, (ix, iy), int(self.cell_radius * 0.45))
             symbol = unit._get_unit_symbol()
+            # draw unit with level border and possible decoration
+            self._draw_unit_with_level_border(int(ix), int(iy), unit)
             # Check for active spin for this unit (moving units can also spin)
             angle = 0.0
             for s in list(self.spin_animations):
@@ -412,23 +419,19 @@ class PygameBoardVisualizer:
 
         # Draw bench row for team 1 (top) and team 2 (bottom)
         try:
-            bench1 = getattr(self.board, 'bench_units_1', []) or []
-            bench2 = getattr(self.board, 'bench_units_2', []) or []
+            bench1 = getattr(self.board, 'player1', None) and getattr(self.board.player1, 'bench', {}) or []
+            bench2 = getattr(self.board, 'player2', None) and getattr(self.board.player2, 'bench', {}) or []
         except Exception:
             bench1 = []
             bench2 = []
 
         # Helper to draw a bench unit cell at given (cx, cy)
-        def _draw_bench_cell(cx, cy, unit, highlight=False):
+        def _draw_bench_cell(cx, cy, unit, color=self.grid_color):
             corners = self.get_bench_cell_corners((cx, cy), self.cell_radius)
-            if highlight:
-                pygame.draw.polygon(self.screen, (255, 255, 255), corners, 2)
-            else:
-                pygame.draw.polygon(self.screen, self.grid_color, corners, 2)
+            pygame.draw.polygon(self.screen, color, corners, 2)
             if unit:
-                team = getattr(unit, 'team', None)
-                color = self.team_colors.get(team, (160, 160, 160))
-                pygame.draw.circle(self.screen, color, (cx, cy), int(self.cell_radius * 0.45))
+                # draw unit circle with level-based border/decoration
+                self._draw_unit_with_level_border(int(cx), int(cy), unit)
                 symbol = unit._get_unit_symbol() if hasattr(unit, '_get_unit_symbol') else '?'
                 text_surf = self.font.render(symbol, True, (255, 255, 255))
                 text_rect = text_surf.get_rect(center=(cx, cy))
@@ -444,7 +447,13 @@ class PygameBoardVisualizer:
         for i in range(min(len(col_centers), self.board.bench_size)):
             cx = col_centers[i]
             unit = bench2[i] if i < len(bench2) else None
-            _draw_bench_cell(cx, bottom_bench_y, unit, highlight=self.highlight_player_initial_zone)
+            if self.highlight_hovered_cell and self.highlight_hovered_cell == (-2, i):
+                highlight_color = (255, 255, 0)
+            elif self.highlight_player_initial_zone:
+                highlight_color = (255, 255, 255)
+            else:   
+                highlight_color=self.grid_color
+            _draw_bench_cell(cx, bottom_bench_y, unit, color=highlight_color)
 
     def _draw_cells(self, highlighted_positions: set, moving_map: dict, now: float):
         """Draw board cells, unit circles, symbols and health/mana bars.
@@ -454,6 +463,7 @@ class PygameBoardVisualizer:
         now: current timestamp in seconds
         """
         self._draw_bench_cells()
+        yellow_highlighted_corners = None
         for x in range(self.board.width):
             for y in range(self.board.height):
                 cell = self.board.get_cell((x, y))
@@ -466,7 +476,11 @@ class PygameBoardVisualizer:
 
                 corners = self.board.get_cell_corners((center_x, center_y), self.cell_radius)
                 # If highlighting is enabled and this cell is in the player's initial zone,
-                # draw a white border to indicate valid placement while dragging.
+                # draw a white border to indicate valid placement while dragging. 
+                # We save the corners to draw a yellow highlight on top, so it appears above other cells.
+                if self.highlight_hovered_cell and self.highlight_hovered_cell == (x, y):
+
+                    yellow_highlighted_corners = corners
                 if (x, y) in highlighted_positions:
                     pygame.draw.polygon(self.screen, (255, 255, 255), corners, 2)
                 else:
@@ -478,7 +492,8 @@ class PygameBoardVisualizer:
                     color = self.team_colors.get(team, (200, 200, 200))
 
                     # Unit circle (smaller relative to cell)
-                    pygame.draw.circle(self.screen, color, (center_x, center_y), int(self.cell_radius * 0.45))
+                    # draw unit circle with level-based border and decoration
+                    self._draw_unit_with_level_border(center_x, center_y, unit)
 
                     # Unit symbol
                     symbol = unit._get_unit_symbol()
@@ -519,6 +534,10 @@ class PygameBoardVisualizer:
                     max_mana = getattr(unit.base_stats, 'max_mana', 0) or 1
                     mana_ratio = max(0.0, min(1.0, unit.current_mana / max_mana))
                     pygame.draw.rect(self.screen, (80, 140, 220), (hb_x, mb_y, int(bar_w * mana_ratio), bar_h))
+        # Draw yellow highlight on top of everything else so it appears above other cells/units
+        if yellow_highlighted_corners:
+            pygame.draw.polygon(self.screen, (255, 255, 0), yellow_highlighted_corners, 3)
+
     def _draw_hover_tooltip(self):
         """Show tooltip for unit under mouse, if any."""
         mx, my = pygame.mouse.get_pos()
@@ -1110,6 +1129,59 @@ class PygameBoardVisualizer:
         self.floating_texts.append([x0, y0, txt, now, duration, vx, vy, txt_color])
         self._seen_events.add(id(ev))
 
+    def _handle_unit_died(self, ev, now: float):
+        """Trigger a short fading death animation centered on the unit's position."""
+        if id(ev) in self._seen_events:
+            return
+        pos = getattr(ev, 'position', None)
+        if pos is None and getattr(ev, 'target', None) and getattr(ev.target, 'position', None):
+            pos = ev.target.position
+        if pos is None:
+            # nothing to draw
+            self._seen_events.add(id(ev))
+            return
+        # convert to pixel coordinates
+        px, py = self.board.coord_to_pixel(pos, self.cell_radius)
+        cx = int(px + self.left_offset + self.margin)
+        cy = int(py + self.top_margin + self.cell_radius + 4)
+        # choose color based on team if available
+        team = None
+        target = getattr(ev, 'target', None)
+        if target is not None:
+            team = getattr(target, 'team', None)
+        color = self.team_colors.get(team, (220, 220, 220))
+        duration =  0.6
+        radius = int(self.cell_radius * 0.45)
+        symbol = getattr(target, '_get_unit_symbol', lambda: '?')()
+        self.death_animations.append([cx, cy, now, duration, color, radius, symbol])
+        self._seen_events.add(id(ev))
+
+    def _draw_death_animations(self, now: float):
+        remaining = []
+        for item in self.death_animations:
+            cx, cy, start, duration, color, radius, symbol = item
+            elapsed = now - start
+            if elapsed <= duration:
+                t = elapsed / max(1e-6, duration)
+                alpha = max(0, int(255 * (1.0 - t)))
+
+                surf = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+                # main fading circle (team color)
+                pygame.draw.circle(surf, (color[0], color[1], color[2], alpha), (radius, radius), radius)
+                # inner flash (white) with stronger fade
+                # inner_alpha = max(0, min(255, int(200 * (1.0 - t))))
+                # pygame.draw.circle(surf, (255, 255, 255, inner_alpha), (cur_r * 2, cur_r * 2), max(2, int(cur_r * 0.6)))
+                self.screen.blit(surf, (int(cx - radius), int(cy - radius)))
+
+                # draw symbol fading
+                txt_surf = self.font.render(symbol, True, (255, 255, 255))
+                txt_surf.set_alpha(alpha)
+                tr = txt_surf.get_rect(center=(cx, cy))
+                self.screen.blit(txt_surf, tr)
+
+                remaining.append(item)
+        self.death_animations = remaining
+
 
     def get_cell_center(self, position: Tuple[int, int]) -> Tuple[int, int]:
         """Return pixel center (x,y) for a board cell position (x,y)."""
@@ -1170,3 +1242,53 @@ class PygameBoardVisualizer:
         else:
             center_y = self.top_margin + 1.5*self.cell_radius + 4 + int(self.cell_radius * 1.5 * self.board.height) 
         return center_x, center_y
+
+    def _level_border_color(self, level: int):
+        """Return RGB color for unit level: 1-bronze,2-silver,3-gold,4-platinum."""
+        if level == 1:
+            return (205, 127, 50)  # bronze
+        if level == 2:
+            return (192, 192, 192)  # silver
+        if level == 3:
+            return (212, 175, 55)  # gold
+        # platinum/other
+        return (170, 220, 255)
+
+    def _draw_unit_with_level_border(self, cx: int, cy: int, unit, radius: int | None = None):
+        """Draw unit circle with a border color based on `unit.level` and add decorations for platinum.
+
+        cx,cy: pixel center. `unit` should expose `level` attribute (int).
+        """
+        if radius is None:
+            radius = int(self.cell_radius * 0.45)
+
+        team = getattr(unit, 'team', None)
+        fill_color = self.team_colors.get(team, (160, 160, 160))
+
+        # draw base circle (filled)
+        pygame.draw.circle(self.screen, fill_color, (int(cx), int(cy)), int(radius))
+
+        # border based on level
+        level = getattr(unit, 'level', 1) or 1
+        border_color = self._level_border_color(level)
+        border_thickness = max(2, int(self.cell_radius * 0.08))
+        pygame.draw.circle(self.screen, border_color, (int(cx), int(cy)), int(radius), border_thickness)
+
+        # platinum decoration: small outward pointing triangles at 4 angles
+        if level >= 4:
+            tri_angles = [0, 90, 180, 270]
+            tri_size = max(6, int(radius * 0.35))
+            tri_offset = max(4, int(radius * 0.15))
+            for a_deg in tri_angles:
+                a = math.radians(a_deg)
+                tip_r = radius + tri_offset
+                tip_x = cx + tip_r * math.cos(a)
+                tip_y = cy + tip_r * math.sin(a)
+                base_r = radius - max(2, int(border_thickness/2))
+                spread = math.radians(18)
+                b1_x = cx + base_r * math.cos(a - spread)
+                b1_y = cy + base_r * math.sin(a - spread)
+                b2_x = cx + base_r * math.cos(a + spread)
+                b2_y = cy + base_r * math.sin(a + spread)
+                pts = [(int(tip_x), int(tip_y)), (int(b1_x), int(b1_y)), (int(b2_x), int(b2_y))]
+                pygame.draw.polygon(self.screen, border_color, pts)

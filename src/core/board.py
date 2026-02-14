@@ -8,6 +8,8 @@ from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass
 from enum import Enum
 from queue import PriorityQueue
+from player import Player
+from player import Player
 from units import Unit, UnitType
 from math_utils import float_less_than_or_equal
 
@@ -53,10 +55,10 @@ class BoardCell:
         self.unit = None
         self.cell_type = CellType.EMPTY
         if unit:
-            unit.position = None
+        #     unit.position = None
+            return unit
         else:
             raise ValueError(f"Tried to remove unit from cell {self.position}")
-        return unit
     
     def set_planned(self):
         """Set cell as planned for unit movement."""
@@ -80,8 +82,9 @@ class Board:
         #It might be edge to edge unit model distance, when melee units are big enough they sometimes reach further than their center to center l2 range would suggest,
         #they keep moving to melee range though.
         self.range_offset = 0.0 
-        self.bench_units_1: Dict[int, Optional[Unit]] = {i:None for i in range(self.bench_size)}
-        self.bench_units_2: Dict[int, Optional[Unit]] = {i:None for i in range(self.bench_size)}
+
+        self.player1: Player = Player(player_id=1)
+        self.player2: Player = Player(player_id=2)
         # Initialize board cells
         for x in range(self.width):
             for y in range(self.height):
@@ -110,7 +113,7 @@ class Board:
             return y >= self.height // 2  # Team 2 on bottom half
         return False
 
-    def place_board_unit(self, unit: Unit, position: Tuple[int, int]) -> bool:
+    def place_board_unit(self, unit: Unit, position: Tuple[int, int], ) -> bool:
         """Place unit at position in board."""
         if not self.is_valid_position(position):
             return False
@@ -120,6 +123,12 @@ class Board:
             return False
         
         cell.place_unit(unit)
+        # maintain player's units_on_board mapping if unit has team
+        team = getattr(unit, 'team', None)
+        if team == 1:
+            self.player1.units_on_board[position] = unit
+        elif team == 2:
+            self.player2.units_on_board[position] = unit
         return True
     
     def place_unit(self, unit: Unit, position: Tuple[int, int]) -> bool:
@@ -158,6 +167,23 @@ class Board:
         if unit is None:
             return False
         to_cell.place_unit(unit)
+        # update player's units_on_board mapping keys. We don't need to sync this unless we want in combat item slams
+        # team = getattr(unit, 'team', None)
+        # if team == 1:
+        #     # remove old key if present and set new key
+        #     try:
+        #         if from_pos in self.player1.units_on_board:
+        #             del self.player1.units_on_board[from_pos]
+        #     except Exception:
+        #         pass
+        #     self.player1.units_on_board[to_pos] = unit
+        # elif team == 2:
+        #     try:
+        #         if from_pos in self.player2.units_on_board:
+        #             del self.player2.units_on_board[from_pos]
+        #     except Exception:
+        #         pass
+        #     self.player2.units_on_board[to_pos] = unit
         return True
     
     def get_units(self) -> List[Unit]:
@@ -175,20 +201,28 @@ class Board:
     def get_bench_unit(self, team: int, bench_index: int) -> Optional[Unit]:
         """Get a unit from a specific bench position for a team."""
         if team == 1:
-            return self.bench_units_1[bench_index] if bench_index < len(self.bench_units_1) else None
+            return self.player1.bench.get(bench_index) if bench_index in self.player1.bench else None
         elif team == 2:
-            return self.bench_units_2[bench_index] if bench_index < len(self.bench_units_2) else None
+            return self.player2.bench.get(bench_index) if bench_index in self.player2.bench else None
         return None
     
     def remove_bench_unit(self, team: int, bench_index: int) -> Optional[Unit]:
         """Remove a unit from a specific bench position for a team."""
-        if team == 1: 
-            unit = self.bench_units_1[bench_index]
-            self.bench_units_1[bench_index] = None
+        if team == 1:
+            unit = self.player1.bench.get(bench_index)
+            if bench_index in self.player1.bench:
+                self.player1.bench[bench_index] = None
+            if unit and unit.position:
+                self.player1.units_on_board[unit.position] = None
+                unit.position = None
             return unit
-        elif team == 2: 
-            unit = self.bench_units_2[bench_index]
-            self.bench_units_2[bench_index] = None
+        elif team == 2:
+            unit = self.player2.bench.get(bench_index)
+            if bench_index in self.player2.bench:
+                self.player2.bench[bench_index] = None
+            if unit and unit.position:
+                self.player2.units_on_board[unit.position] = None
+                unit.position = None
             return unit
         return None
 
@@ -197,26 +231,32 @@ class Board:
         if unit is None:
             return False
         if team == 1:
+            bench = self.player1.bench
+            size = len(bench)
             if bench_index == -1:
-                for i in range(self.bench_size):
-                    if self.bench_units_1[i] is None:
-                        self.bench_units_1[i] = unit
+                for i in range(size):
+                    if bench.get(i) is None:
+                        unit.position = (-1, i)
+                        bench[i] = unit
                         return True
             else:
-                if 0 <= bench_index < self.bench_size and self.bench_units_1[bench_index] is None:
+                if 0 <= bench_index < size and bench.get(bench_index) is None:
                     unit.position = (-1, bench_index)
-                    self.bench_units_1[bench_index] = unit
+                    bench[bench_index] = unit
                     return True
         elif team == 2:
+            bench = self.player2.bench
+            size = len(bench)
             if bench_index == -1:
-                for i in range(self.bench_size):
-                    if self.bench_units_2[i] is None:
-                        self.bench_units_2[i] = unit
+                for i in range(size):
+                    if bench.get(i) is None:
+                        unit.position = (-2, i)
+                        bench[i] = unit
                         return True
             else:
-                if 0 <= bench_index < self.bench_size and self.bench_units_2[bench_index] is None:
+                if 0 <= bench_index < size and bench.get(bench_index) is None:
                     unit.position = (-2, bench_index)
-                    self.bench_units_2[bench_index] = unit
+                    bench[bench_index] = unit
                     return True
         return False
         
@@ -239,7 +279,7 @@ class Board:
         
         # Handle bench to board move
         if from_pos[0] < 0 and to_pos[0] >= 0:
-            bench_unit = self.get_bench_unit(team, from_pos[1])
+            bench_unit = self.remove_bench_unit(team, from_pos[1])
             if bench_unit is None:
                 return False
             to_unit= self.get_cell(to_pos).unit
@@ -247,7 +287,7 @@ class Board:
                 self.remove_unit(to_pos)
             if not self.place_board_unit(bench_unit, to_pos):
                 return False
-            self.remove_bench_unit(team, from_pos[1])
+            
             if to_unit is not None and to_unit.team == team:
                 self.add_bench_unit(team, to_unit, bench_index=from_pos[1])
             return True
@@ -301,7 +341,28 @@ class Board:
                 self.remove_bench_unit(team, from_pos[1])
                 return self.add_bench_unit(team, from_bench_unit, bench_index=to_pos[1])
 
+    def apply_player_units(self, player: Player):
+        """Place all of a player's units on the board according to their position attribute."""
+        # Set this board's player reference so bench accessors use the player's bench
+        if player.player_id == 1:
+            self.player1 = player
+        elif player.player_id == 2:
+            self.player2 = player
 
+        # Clear any existing units on the board for this team
+        for unit in list(self.get_units_by_team(player.player_id)):
+            if unit:
+                self.remove_unit(unit.position)
+
+        # Place units according to their position attribute on the board. Bench slots live on the Player object.
+        for unit in player.units_on_board.values():
+            if unit:
+                self.place_board_unit(unit, unit.position)
+        # ensure board bench size matches player's bench
+        self.bench_size = len(player.bench)
+
+
+            
 
     @staticmethod
     # @njit

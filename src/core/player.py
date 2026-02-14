@@ -3,37 +3,38 @@ Player representation and state management.
 """
 
 import numpy as np
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass, field
+from game_params import GameParams
 
 from units import Unit, UnitType, UnitRarity
 
 
-@dataclass
+
 class Player:
     """
     Represents a player in the auto chess game.
     """
-    player_id: int
     health: int = 100
     gold: int = 10
     level: int = 1
     experience: int = 0
     max_units_on_board: int = 1
-    
-    # Units
-    bench: Dict[int, Optional[Unit]] = field(default_factory=lambda: {i:None for i in range(9)})
-    units_on_board: List[Unit] = field(default_factory=list)
+
+
     
     # Shop
     shop_units: List[Unit] = field(default_factory=list)
     rerolls_this_turn: int = 0
     
-    # def __post_init__(self):
-    #     """Initialize player with starting shop."""
-    #     if not self.shop_units:
-    #         self._generate_shop()
     
+    def __init__(self, player_id: int, game_params:GameParams = GameParams()) -> None:
+        self.player_id = player_id
+        self.game_params = game_params
+        self.bench: Dict[int, Optional[Unit]] = {i:None for i in range(game_params.bench_size)}
+        self.units_on_board: Dict[Tuple[int, int], Optional[Unit]] = {(i,j): None for i in range(game_params.board_size[0]) for j in range(game_params.board_size[1])}
+        
+
     def _generate_shop(self):
         """Generate shop units based on player level."""
         self.shop_units = []
@@ -79,45 +80,67 @@ class Player:
     
     def sell_unit(self, unit: Unit) -> bool:
         """Sell unit for gold."""
-        if unit in self.bench:
-            self.bench.remove(unit)
-            self.gold += unit.get_sell_value()
-            return True
-        elif unit in self.units_on_board:
-            self.units_on_board.remove(unit)
-            self.gold += unit.get_sell_value()
-            return True
+        # Try remove from bench
+        for k, v in list(self.bench.items()):
+            if v is unit:
+                self.bench[k] = None
+                self.gold += unit.get_sell_value()
+                return True
+
+        # Try remove from board (units_on_board is a dict[position->unit])
+        for k, v in list(self.units_on_board.items()):
+            if v is unit:
+                self.units_on_board[k] = None
+                self.gold += unit.get_sell_value()
+                return True
+
         return False
     
     def add_unit_to_bench(self, unit: Unit) -> bool:
         """Add unit to bench if space is available."""
-        for i in range(8):
+        for i in sorted(self.bench.keys()):
             if self.bench[i] is None:
+                unit.position = (-self.player_id, i)  
                 self.bench[i] = unit
+                
                 return True
         return False
     
     def add_unit(self, unit: Unit) -> bool:
         """Add unit to bench or board."""
-        if len([u for u in self.bench.values() if u is not None]) < 8:
+        # If there's space on the bench, add there
+        if len([u for u in self.bench.values() if u is not None]) < len(self.bench):
             self.add_unit_to_bench(unit)
-            # self.check_unit_level_up()  # Check for level up after adding unit
+            if self.game_params.unit_level_up:
+                self.check_unit_level_up()
             return True
-        elif len(self.units_on_board) < self.max_units_on_board:
-            self.units_on_board.append(unit)
-            # self.check_unit_level_up()  # Check for level up after adding unit
-            return True
+
+        # Otherwise, try to place on the board into the first available position
+        if len([u for u in self.units_on_board.values() if u is not None]) < self.max_units_on_board:
+            i = 0
+            while True:
+                pos = (i, 0)
+                if pos not in self.units_on_board:
+                    unit.position = pos
+                    self.units_on_board[pos] = unit
+                    if self.game_params.unit_level_up:
+                        self.check_unit_level_up()
+                    return True
+                i += 1
         return False
     
     def remove_unit(self, unit: Unit) -> bool:
         """Remove unit from bench or board."""
-        for i in range(8):
+        for i in sorted(self.bench.keys()):
             if self.bench[i] is unit:
                 self.bench[i] = None
                 return True
-        if unit in self.units_on_board:
-            self.units_on_board.remove(unit)
-            return True
+
+        for pos, u in list(self.units_on_board.items()):
+            if u is unit:
+                # remove the mapping
+                del self.units_on_board[pos]
+                return True
         return False
     
     def reroll_shop(self) -> bool:
@@ -145,7 +168,7 @@ class Player:
         unit_counts: Dict[str, List[Unit]] = {}
         
         # Count units on bench and board
-        for unit in list(self.bench.values()) + self.units_on_board:
+        for unit in list(self.bench.values()) + list(self.units_on_board.values()):
             if unit is None:
                 continue
             key = f"{unit.unit_type}_{unit.rarity}"
@@ -174,7 +197,7 @@ class Player:
     
     def get_total_unit_count(self) -> int:
         """Get total number of units owned."""
-        return len(self.bench) + len(self.units_on_board)
+        return len([u for u in self.bench.values() if u is not None]) + len([u for u in self.units_on_board.values() if u is not None])
     
     def to_array(self) -> np.ndarray:
         """Convert player state to numerical array."""
@@ -183,25 +206,47 @@ class Player:
             self.gold / 100.0,    # Normalized gold
             self.level / 10.0,    # Normalized level
             self.experience / 20.0,  # Normalized experience
-            len(self.bench) / 8.0,   # Bench usage
-            len(self.units_on_board) / 8.0,  # Board usage
+            len([u for u in self.bench.values() if u is not None]) / max(1, len(self.bench)),   # Bench usage
+            len([u for u in self.units_on_board.values() if u is not None]) / max(1, max(1, len(self.units_on_board))),  # Board usage
             self.rerolls_this_turn / 10.0,   # Rerolls
         ], dtype=np.float32)
+
+    def set_units_on_board_from_list(self, units: List[Unit]) -> None:
+        """Populate `units_on_board` from a list. Fills positions starting at 0."""
+        # Clear existing
+        self.units_on_board.clear()
+        for i, unit in enumerate(units):
+            if unit is None:
+                continue
+            if hasattr(unit, 'position') and isinstance(unit.position, tuple) and len(unit.position) == 2 and unit.position is not None:
+                pos = unit.position
+            else:
+                raise ValueError(f"Unit {unit} does not have a valid position attribute for board placement.")
+            self.units_on_board[pos] = unit
+
+    def get_units_on_board_list(self) -> List[Unit]:
+        """Return the units on board as a list ordered by position (excluding empty slots)."""
+        return [u for _, u in sorted(self.units_on_board.items(), key=lambda kv: (kv[0][0], kv[0][1])) if u is not None]
+    
+
     
     def clone(self) -> 'Player':
         """Create a deep copy of the player."""
-        cloned = Player(
-            player_id=self.player_id,
-            health=self.health,
-            gold=self.gold,
-            level=self.level,
-            experience=self.experience,
-            rerolls_this_turn=self.rerolls_this_turn
-        )
-        
-        # Clone units
-        cloned.bench = [unit.clone() for unit in self.bench]
-        cloned.units_on_board = [unit.clone() for unit in self.units_on_board]
+        cloned = Player()
+        cloned.player_id = self.player_id
+        cloned.health = self.health
+        cloned.gold = self.gold
+        cloned.level = self.level
+        cloned.experience = self.experience
+        cloned.max_units_on_board = self.max_units_on_board
+        cloned.rerolls_this_turn = self.rerolls_this_turn
+
+        # Clone bench (dict)
+        cloned.bench = {k: (v.clone() if v else None) for k, v in self.bench.items()}
+
+        # Clone units_on_board (dict)
+        cloned.units_on_board = {k: (v.clone() if v else None) for k, v in self.units_on_board.items()}
+
         cloned.shop_units = [unit.clone() if unit else None for unit in self.shop_units]
-        
+
         return cloned

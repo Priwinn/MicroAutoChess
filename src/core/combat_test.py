@@ -68,29 +68,33 @@ def create_mock_units():
     
     # Define unit types for team 1
     unit_types = [UnitType.TANK, UnitType.ARCHER, UnitType.TANK, UnitType.ARCHER]
+    positions = [(3, 3), (0, 0), (2, 3), (1, 2)]
     
     # Create Team 1 Units (uppercase symbols)
     team1_units = []
-    for unit_type in unit_types:
+    for unit_type, position in zip(unit_types, positions):
         unit = Unit(
             unit_type=unit_type,
             rarity=UnitRarity.COMMON,
             team=1,
-            level=1
+            level=1,
+            position=position
         )
         unit.current_health = unit.get_max_health()
         team1_units.append(unit)
     
     #Define unit types for team 2
     unit_types = [UnitType.WARRIOR, UnitType.ARCHER, UnitType.TANK, UnitType.ASSASSIN]
+    positions = [(3, 4), (6, 7), (4, 4), (5, 5)]
     # Create Team 2 Units (lowercase symbols)
     team2_units = []
-    for unit_type in unit_types:
+    for unit_type, position in zip(unit_types, positions):
         unit = Unit(
             unit_type=unit_type,
             rarity=UnitRarity.COMMON,
             team=2,
-            level=1
+            level=1,
+            position=position
         )
         unit.current_health = unit.get_max_health()
         team2_units.append(unit)
@@ -112,22 +116,16 @@ def setup_combat_scenario(debug: bool = False):
 
     # Create players and assign units on board
     player1 = Player(player_id=1)
-    player1.units_on_board = team1_units
+    player1.set_units_on_board_from_list(team1_units)
     player2 = Player(player_id=2)
-    player2.units_on_board = team2_units
+    player2.set_units_on_board_from_list(team2_units)
     
     # Position Team 1 units (top side)
-    board.place_board_unit(team1_units[0], (3, 3))  # Warrior front
-    board.place_board_unit(team1_units[2], (2, 3))  # Tank front
-    board.place_board_unit(team1_units[3], (1, 2))  # Assassin second line
-    board.place_board_unit(team1_units[1], (0, 0))  # Archer back
+    board.apply_player_units(player1)
 
     
     # Position Team 2 units (bottom side)
-    board.place_board_unit(team2_units[0], (3, 4))  # Warrior front
-    board.place_board_unit(team2_units[2], (4, 4))  # Tank front
-    board.place_board_unit(team2_units[3], (5, 5))  # Assassin second line
-    board.place_board_unit(team2_units[1], (6, 7))  # Archer back
+    board.apply_player_units(player2)
     
     return board, player1, player2
 
@@ -147,8 +145,8 @@ def run_combat_demonstration(debug: bool = False, combat_seed: int = 42):
         print("- Warrior: High health, melee range (1), balanced damage")
         print("- Archer: Lower health, ranged (3), good damage")
         
-        visualizer.print_unit_stats(player1.units_on_board, "Team 1")
-        visualizer.print_unit_stats(player2.units_on_board, "Team 2")
+        visualizer.print_unit_stats(player1.get_units_on_board_list(), "Team 1")
+        visualizer.print_unit_stats(player2.get_units_on_board_list(), "Team 2")
     
     
     # Create combat engine and simulate
@@ -162,8 +160,8 @@ def run_combat_demonstration(debug: bool = False, combat_seed: int = 42):
         print("COMBAT COMPLETE!")
         print("=" * 60)
         visualizer.print_board("Final Board State")
-        visualizer.print_unit_stats(player1.units_on_board, "Team 1 (Final)")
-        visualizer.print_unit_stats(player2.units_on_board, "Team 2 (Final)")
+        visualizer.print_unit_stats(player1.get_units_on_board_list(), "Team 1 (Final)")
+        visualizer.print_unit_stats(player2.get_units_on_board_list(), "Team 2 (Final)")
     
     # Combat summary
     summary = combat_engine.get_combat_summary()
@@ -208,8 +206,8 @@ def interactive_step_by_step():
     combat_engine = CombatEngine(board, player1, player2, combat_seed=42)
     
     visualizer.print_board("Starting Positions")
-    visualizer.print_unit_stats(player1.units_on_board, "Team 1")
-    visualizer.print_unit_stats(player2.units_on_board, "Team 2")
+    visualizer.print_unit_stats(player1.get_units_on_board_list(), "Team 1")
+    visualizer.print_unit_stats(player2.get_units_on_board_list(), "Team 2")
     
     max_frames = 500
 
@@ -217,8 +215,8 @@ def interactive_step_by_step():
         frame_num = combat_engine.frame_number + 1
 
         # Check win conditions
-        team1_alive = any(u.is_alive() for u in player1.units_on_board)
-        team2_alive = any(u.is_alive() for u in player2.units_on_board)
+        team1_alive = any(u.is_alive() for u in player1.get_units_on_board_list())
+        team2_alive = any(u.is_alive() for u in player2.get_units_on_board_list())
 
         if not team1_alive:
             print(f"\n🏆 Team 2 Wins after {combat_engine.frame_number} frames!")
@@ -251,8 +249,8 @@ def interactive_step_by_step():
                     print(f"  💀 {event.description}")
         
         # Show current unit status
-        visualizer.print_unit_stats(player1.units_on_board, "Team 1")
-        visualizer.print_unit_stats(player2.units_on_board, "Team 2")
+        visualizer.print_unit_stats(player1.get_units_on_board_list(), "Team 1")
+        visualizer.print_unit_stats(player2.get_units_on_board_list(), "Team 2")
     
     print("\nInteractive demo completed!")
 

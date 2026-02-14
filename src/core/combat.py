@@ -87,10 +87,10 @@ class CombatEngine:
         Returns the two lists of units used for combat.
         """
 
-        # Assign teams to units on board
-        for unit in self.player1.units_on_board:
+        # Assign teams to units on board (units_on_board is a dict)
+        for unit in [u for u in list(self.player1.units_on_board.values()) if u is not None]:
             unit.team = 1
-        for unit in self.player2.units_on_board:
+        for unit in [u for u in list(self.player2.units_on_board.values()) if u is not None]:
             unit.team = 2
     
     # def update_players(self, player1: Player, player2: Player):
@@ -121,10 +121,10 @@ class CombatEngine:
         
         # Combat loop with delayed actions
         while self.frame_number < self.max_frames:
-            
-            # Get all living units
-            all_units = [u for u in self.player1.units_on_board + self.player2.units_on_board if u.is_alive()]
-            
+
+            # Get all living units from dicts
+            all_units = [u for u in list(self.player1.units_on_board.values()) + list(self.player2.units_on_board.values()) if u is not None and u.is_alive()]
+
             if not all_units:
                 break
             
@@ -141,8 +141,8 @@ class CombatEngine:
             self._execute_delayed_frame()
         
         # Timeout - determine winner by remaining health
-        team1_health = sum(u.current_health for u in self.player1.units_on_board if u.is_alive())
-        team2_health = sum(u.current_health for u in self.player2.units_on_board if u.is_alive())
+        team1_health = sum(u.current_health for u in list(self.player1.units_on_board.values()) if u is not None and u.is_alive())
+        team2_health = sum(u.current_health for u in list(self.player2.units_on_board.values()) if u is not None and u.is_alive())
         
         if team1_health > team2_health:
             return 1
@@ -160,7 +160,7 @@ class CombatEngine:
 
         # Sort units by position for consistent processing order. 
         # TODO: optimize by only sorting when necessary (when units move or are added).
-        all_units = [u for u in self.player1.units_on_board + self.player2.units_on_board if u.is_alive()]
+        all_units = [u for u in list(self.player1.units_on_board.values()) + list(self.player2.units_on_board.values()) if u is not None and u.is_alive()]
         all_units.sort(key=lambda u: (u.position[0]*self.board.size[1] + u.position[1]) if u.position else float('inf'))
 
         # Phase 1: Execute actions that are ready this frame
@@ -417,7 +417,6 @@ class CombatEngine:
                                        crit_dmg=action.unit.base_stats.crit_dmg, 
                                        can_crit=action.unit.spell_crit, 
                                        crit_roll=self.rng.random())
-            
 
             event = CombatEvent(
                 frame_number=self.frame_number,

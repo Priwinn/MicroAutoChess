@@ -109,11 +109,13 @@ class PvERoundManager:
 
         # prepare enemy units (fresh clones)
         enemy_units = place_units_from_config(board, self.configs[self.round_index], team=1)
-        player1.units_on_board = enemy_units
+        # set player's units_on_board from the returned list
+        player1.set_units_on_board_from_list(enemy_units)
 
-        for u in player2.units_on_board:
+        # reset/place player2 units on board using dict API
+        for u in player2.get_units_on_board_list():
             u.round_reset()
-            board.place_board_unit(u, u.position) 
+            board.place_board_unit(u, u.position)
 
                 
 

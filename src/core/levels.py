@@ -132,14 +132,23 @@ LEVEL9 = {
     'budget_inc': 1
 }
 
+LEVELTANKSTEST = {
+    'board_size': (7, 8),
+    # 'board_type': 'diagonal_square',
+    'units': {(i,j): UnitType.TANK for i in range(7) for j in range(4)},
+    'budget_inc': 9
+}
+
 LEVELTANKS = {
     'board_size': (7, 8),
+
     'units': {(i,j): UnitType.TANK for i in range(7) for j in range(4)},
     'budget_inc': 2
 }
 
 
 LEVELS = [
+    LEVELTANKSTEST,
     LEVEL1, 
     LEVEL2, 
     LEVEL3, 
@@ -151,3 +160,22 @@ LEVELS = [
     LEVEL9,
     LEVELTANKS
 ]
+
+TANKSSOLUTION = {
+    'board_size': (7, 8),
+    # 'board_type': 'diagonal_square',
+    'units': {
+            (1,4): UnitType.TANK,
+            (2,4): UnitType.TANK,
+            (3,4): UnitType.TANK,
+            (4,4): UnitType.TANK,
+            (5,4): UnitType.TANK,
+            (6,4): UnitType.TANK,
+            (6,6): UnitType.ARCHER,
+            (5,7): UnitType.ARCHER,
+            (6,7): UnitType.ARCHER
+            },
+            
+    'budget_inc': 9
+    
+}

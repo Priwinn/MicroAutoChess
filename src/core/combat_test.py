@@ -12,6 +12,8 @@ from board import Board, HexBoard
 from combat import CombatEngine, CombatEvent, CombatAction
 from player import Player
 import time
+from utils import setup_board_from_config, place_units_from_config
+from levels import LEVELTANKSTEST, TANKSSOLUTION
 
 
 class CombatVisualizer:
@@ -109,11 +111,9 @@ def setup_combat_scenario(debug: bool = False):
         print("=" * 60)
     
     # Create board
-    board = HexBoard(size=(7, 8))
+    board, team1_units, _ = setup_board_from_config(LEVELTANKSTEST)
+    team2_units = place_units_from_config(board, TANKSSOLUTION, team=2)
     
-    # Create units
-    team1_units, team2_units = create_mock_units()
-
     # Create players and assign units on board
     player1 = Player(player_id=1)
     player1.set_units_on_board_from_list(team1_units)
@@ -332,10 +332,21 @@ def main(debug: bool = False):
 
 if __name__ == "__main__":
     debug = True
-    main(debug=debug)
+    # main(debug=debug)
 
     # Time the combat demonstration
     # time_combat_demo(iterations=100)  # Adjust iterations for timing
 
     # Time the combat demonstration with win rates
-    time_combat_demo_with_winrates(iterations=100)  # Adjust iterations for timing
+    import cProfile
+    from pstats import Stats
+
+    pr = cProfile.Profile()
+    pr.enable()
+
+    time_combat_demo_with_winrates(iterations=10)
+
+    pr.disable()
+    stats = Stats(pr)
+    stats.sort_stats('tottime').print_stats(10)
+    # time_combat_demo_with_winrates(iterations=10)  # Adjust iterations for timing

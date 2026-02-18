@@ -120,7 +120,7 @@ def main():
                             if target is None:
                                 valid = board.get_initial_positions(2)
                                 for pos in valid:
-                                    c = board.get_cell(pos)
+                                    c = board.cells[pos]
                                     if c.is_empty():
                                         target = pos
                                         break
@@ -147,7 +147,7 @@ def main():
                     if paused and engine.frame_number == 0:
                         cell_pos = visual.get_pos_at_pixel(event.pos)
                         if cell_pos is not None and cell_pos[0] >= 0:
-                            cell = board.get_cell(cell_pos)
+                            cell = board.cells[cell_pos]
                             # Only allow dragging units that belong to player (team 2)
                             # and that are located in team 2's initial placement zone
                             if cell and cell.unit is not None and getattr(cell.unit, 'team', None) == 2:

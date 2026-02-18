@@ -13,6 +13,9 @@ from player import Player
 from units import Unit, UnitType
 from math_utils import float_less_than_or_equal
 
+import pathfinding_ext as _pathfinding_ext
+# _pathfinding_ext = None
+
 
 
 class CellType(Enum):
@@ -85,17 +88,20 @@ class Board:
 
         self.player1: Player = Player(player_id=1)
         self.player2: Player = Player(player_id=2)
+        # Cache for C++ pathfinding occupied grid
+        self._occupied_cache = None
+        self._occupied_cache_dirty = True
         # Initialize board cells
         for x in range(self.width):
             for y in range(self.height):
                 self.cells[(x, y)] = BoardCell((x, y))
     
-    def get_cell(self, position: Tuple[int, int]) -> BoardCell:
-        """Get cell at position."""
-        output = self.cells.get(position)
-        if output is None:
-            raise ValueError(f"Position {position} does not exist on the board")
-        return output
+    # def get_cell(self, position: Tuple[int, int]) -> BoardCell:
+    #     """Get cell at position."""
+    #     output = self.cells.get(position)
+    #     if output is None:
+    #         raise ValueError(f"Position {position} does not exist on the board")
+    #     return output
 
     def is_valid_position(self, position: Tuple[int, int]) -> bool:
         """Check if position is within board bounds."""
@@ -112,13 +118,25 @@ class Board:
         elif team == 2:
             return y >= self.height // 2  # Team 2 on bottom half
         return False
+    
+    def _invalidate_occupied_cache(self):
+        """Mark the occupied grid cache as dirty."""
+        self._occupied_cache_dirty = True
+    
+    def _rebuild_occupied_cache(self):
+        """Rebuild the occupied grid cache for C++ pathfinding."""
+        self._occupied_cache = [0] * (self.width * self.height)
+        for (x, y), cell in self.cells.items():
+            if cell.unit is not None:
+                self._occupied_cache[y * self.width + x] = 1
+        self._occupied_cache_dirty = False
 
     def place_board_unit(self, unit: Unit, position: Tuple[int, int], ) -> bool:
         """Place unit at position in board."""
         if not self.is_valid_position(position):
             return False
         
-        cell = self.get_cell(position)
+        cell = self.cells[position]
         if not cell or not cell.is_empty():
             return False
         
@@ -129,6 +147,7 @@ class Board:
             self.player1.units_on_board[position] = unit
         elif team == 2:
             self.player2.units_on_board[position] = unit
+        self._invalidate_occupied_cache()
         return True
     
     def place_unit(self, unit: Unit, position: Tuple[int, int]) -> bool:
@@ -139,10 +158,11 @@ class Board:
         if not self.is_valid_position(position):
             return False
         
-        cell = self.get_cell(position)
+        cell = self.cells[position]
         if not cell or not cell.is_empty():
             return False
         cell.place_unit(unit)
+        self._invalidate_occupied_cache()
         return True
     
     def move_unit(self, from_pos: Tuple[int, int], to_pos: Tuple[int, int]) -> bool:
@@ -150,8 +170,8 @@ class Board:
         if not (self.is_valid_position(from_pos) and self.is_valid_position(to_pos)):
             return False
         
-        from_cell = self.get_cell(from_pos)
-        to_cell = self.get_cell(to_pos)
+        from_cell = self.cells[from_pos]
+        to_cell = self.cells[to_pos]
         
         if not from_cell or not to_cell:
             return False
@@ -167,6 +187,7 @@ class Board:
         if unit is None:
             return False
         to_cell.place_unit(unit)
+        self._invalidate_occupied_cache()
         # update player's units_on_board mapping keys. We don't need to sync this unless we want in combat item slams
         # team = getattr(unit, 'team', None)
         # if team == 1:
@@ -282,7 +303,7 @@ class Board:
             bench_unit = self.remove_bench_unit(team, from_pos[1])
             if bench_unit is None:
                 return False
-            to_unit= self.get_cell(to_pos).unit
+            to_unit= self.cells[to_pos].unit
             if to_unit is not None and to_unit.team == team:
                 self.remove_unit(to_pos)
             if not self.place_board_unit(bench_unit, to_pos):
@@ -294,7 +315,7 @@ class Board:
 
         # Handle board to bench move
         if from_pos[0] >= 0 and to_pos[0] < 0:
-            from_unit = self.get_cell(from_pos).unit
+            from_unit = self.cells[from_pos].unit
             if from_unit is None:
                 return False
             self.remove_unit(from_pos)
@@ -306,8 +327,8 @@ class Board:
 
         # Handle board to board move
         if from_pos[0] >= 0 and to_pos[0] >= 0:
-            to_pos_cell = self.get_cell(to_pos)
-            from_pos_cell = self.get_cell(from_pos)
+            to_pos_cell = self.cells[to_pos]
+            from_pos_cell = self.cells[from_pos]
             to_pos_unit = to_pos_cell.unit
             from_pos_unit = from_pos_cell.unit
             if from_pos_cell.unit is None:
@@ -319,6 +340,7 @@ class Board:
                 from_pos_unit = from_pos_cell.remove_unit()
                 to_pos_cell.place_unit(from_pos_unit)
                 from_pos_cell.place_unit(to_pos_unit)
+                self._invalidate_occupied_cache()
                 return True
             else:
                 return self.move_unit(from_pos, to_pos)
@@ -378,6 +400,29 @@ class Board:
     
     def pathfind_distance(self, start: Tuple[int, int], target: Tuple[int, int]) -> float:
         """Calculate pathfinding distance between two positions using A*."""
+        if _pathfinding_ext is not None:
+            board_type = "hex"
+            if isinstance(self, DiagonalSquareBoard):
+                board_type = "diagonal"
+            elif isinstance(self, SquareBoard):
+                board_type = "square"
+            # Use cached occupied grid if available
+            if self._occupied_cache_dirty or self._occupied_cache is None:
+                self._rebuild_occupied_cache()
+            try:
+                dist = _pathfinding_ext.pathfind_distance(
+                    self.width,
+                    self.height,
+                    board_type,
+                    self._occupied_cache,
+                    start,
+                    target,
+                )
+                if dist >= 0:
+                    return float(dist)
+                return float('inf')
+            except Exception:
+                pass
         path = self.find_path(start, target)
         if not path:
             return float('inf')
@@ -385,10 +430,11 @@ class Board:
     
     def pathfind_distance_to_range(self, start: Tuple[int, int], target: Tuple[int, int], attack_range: float) -> float:
         """Calculate pathfinding distance to get within attack range of target."""
-        target_positions = self.get_positions_in_l2_range(target, attack_range)
-        if start in target_positions:
+        if self.l2_distance(start, target) <= attack_range + attack_range*self.range_offset:
             return 0.0
-        target_positions = [pos for pos in target_positions if self.get_cell(pos).is_empty()]
+        target_positions = self.get_positions_at_l2_distance(target, attack_range)
+
+        target_positions = [pos for pos in target_positions if self.cells[pos].is_empty()]
         min_distance = float('inf')
         for pos in target_positions:
             distance = self.pathfind_distance(start, pos)
@@ -407,11 +453,11 @@ class Board:
             raise ValueError(f"Position {position} is out of bounds")
         
         adjacent = self.get_adjacent_positions(position)
-        return [self.get_cell(pos) for pos in adjacent if self.get_cell(pos) is not None]
+        return [self.cells[pos] for pos in adjacent if self.cells[pos] is not None]
     
     def get_cells_in_l1_range(self, position: Tuple[int, int], l1_range: int) -> List[BoardCell]:
         """Get all cells within a certain amount of steps from a position."""
-        return [self.get_cell(pos) for pos in self.get_positions_in_l1_range(position, l1_range)]
+        return [self.cells[pos] for pos in self.get_positions_in_l1_range(position, l1_range)]
     
     def get_positions_in_l1_range(self, position: Tuple[int, int], l1_range: int) -> List[Tuple[int, int]]:
         """Get all positions within a certain amount of steps from a position."""
@@ -471,7 +517,7 @@ class Board:
 
             for neighbor in self.get_adjacent_positions(current):
 
-                if not self.get_cell(neighbor).is_empty() and neighbor != target:
+                if not self.cells[neighbor].is_empty() and neighbor != target:
                     continue
                 tentative_g_score = g_score[current] + 1  # Assume cost is 1
 
@@ -512,7 +558,7 @@ class Board:
 
             for neighbor in self.get_adjacent_positions(current):
 
-                if not self.get_cell(neighbor).is_empty() and neighbor != target:
+                if not self.cells[neighbor].is_empty() and neighbor != target:
                     continue
                 tentative_g_score = g_score[current] + 1  # Assume cost is 1
                 #Prefer move that is closer to target according to l2
@@ -535,7 +581,7 @@ class Board:
     def find_path_to_range_guided(self, start: Tuple[int, int], target: Tuple[int, int], attack_range: float) -> List[Tuple[int, int]]:
         """Find path to get within attack range of target using A* algorithm with guided movement."""
         target_positions = self.get_positions_in_l2_range(target, attack_range)
-        target_positions = [pos for pos in target_positions if self.get_cell(pos).is_empty() or pos == start]
+        target_positions = [pos for pos in target_positions if self.cells[pos].is_empty() or pos == start]
         #Sort target positions by vertical distance to start to prefer horizontal movement. Ties are broken by l2 distance to target to prefer moves that get closer to target.
         target_positions.sort(key=lambda pos: abs(pos[1]-start[1])+self.l2_distance(pos, target)/100)
         shortest_path = []
@@ -562,22 +608,25 @@ class Board:
 
     def is_empty(self, position: Tuple[int, int]) -> bool:
         """Check if a cell is empty."""
-        cell = self.get_cell(position)
+        cell = self.cells[position]
         return cell.is_empty() if cell else False
 
     def remove_unit(self, position: Tuple[int, int]) -> Unit:
         """Remove unit from a specific position."""
-        cell = self.get_cell(position)
+        cell = self.cells[position]
         if cell and not cell.is_empty():
-            return cell.remove_unit()
+            unit = cell.remove_unit()
+            self._invalidate_occupied_cache()
+            return unit
         raise ValueError(f"Tried to remove unit from empty cell {position}")
     
     def set_planned(self, position: Tuple[int, int], unit: Unit):
         """Set a cell as planned for unit movement."""
-        cell = self.get_cell(position)
+        cell = self.cells[position]
         if cell and cell.is_empty():
             cell.set_planned()
             cell.unit = unit
+            self._invalidate_occupied_cache()
         else:
             raise ValueError(f"Cell {position} is not empty or already planned")
 
@@ -586,6 +635,7 @@ class Board:
         for cell in self.cells.values():
             cell.unit = None
             cell.cell_type = CellType.EMPTY
+        self._invalidate_occupied_cache()
 
     def clone(self) -> 'Board':
         """Create a deep copy of the board."""
@@ -644,7 +694,7 @@ class SquareBoard(Board):
             raise ValueError(f"Position {position} is out of bounds")
         
         adjacent = self.get_adjacent_positions(position)
-        return [self.get_cell(pos) for pos in adjacent if self.get_cell(pos) is not None]
+        return [self.cells[pos] for pos in adjacent if pos in self.cells]
 
     
     def get_positions_in_l1_range(self, position: Tuple[int, int], l1_range: int) -> List[Tuple[int, int]]:
@@ -684,7 +734,8 @@ class SquareBoard(Board):
         
         for x in range(min_x, max_x + 1):
             for y in range(min_y, max_y + 1):
-                if float_less_than_or_equal(abs(self.l2_distance(position, (x, y)) - l2_distance), 0.66):
+                distance = self.l2_distance(position, (x, y))
+                if l2_distance-distance < 1+1e-9 and distance - l2_distance < 1e-9:
                     positions_at_distance.append((x, y))
         
         return positions_at_distance
@@ -702,7 +753,7 @@ class SquareBoard(Board):
         for y in range(self.height):
             print(f"{y} ", end="")
             for x in range(self.width):
-                cell = self.get_cell((x, y))
+                cell = self.cells[(x, y)]
                 if cell and cell.unit:
                     # Display unit with team indicator
                     unit = cell.unit
@@ -745,6 +796,26 @@ class HexBoard(Board):
     def __init__(self, size: Tuple[int, int] = (7, 8)):
         super().__init__(size)
         self.range_offset = 1/6
+        # Precalculate and cache pixel coordinates for all positions
+        self._pixel_coords = {}
+        for x in range(self.width):
+            for y in range(self.height):
+                q, r = oddr_to_axial((x, y))
+                px = q + r / 2
+                py = r * 3**0.5 / 2
+                self._pixel_coords[(x, y)] = (px, py)
+        
+        # Precalculate and cache l2 distances for all position pairs
+        self._l2_distance_cache = {}
+        for x1 in range(self.width):
+            for y1 in range(self.height):
+                for x2 in range(self.width):
+                    for y2 in range(self.height):
+                        px1, py1 = self._pixel_coords[(x1, y1)]
+                        px2, py2 = self._pixel_coords[(x2, y2)]
+                        dist = np.sqrt((px1 - px2) ** 2 + (py1 - py2) ** 2)
+                        # Cache with both orderings for lookup efficiency
+                        self._l2_distance_cache[((x1, y1), (x2, y2))] = dist
     
     
     def get_adjacent_positions(self, position: Tuple[int, int]) -> List[Tuple[int, int]]:
@@ -789,25 +860,10 @@ class HexBoard(Board):
         # Calculate hex distance in axial coordinates
         return (abs(q1 - q2) + abs(q1 + r1 - q2 - r2) + abs(r1 - r2)) // 2
 
-    @staticmethod
     # @njit
-    def l2_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
-        """Calculate Euclidean distance for hexagonal grid."""
-        x1, y1 = pos1
-        x2, y2 = pos2
-        
-        # Convert to axial coordinates
-        q1, r1 = oddr_to_axial((x1, y1))
-        q2, r2 = oddr_to_axial((x2, y2))
-
-        # Convert to pixel coordinates, with center to center distance of 1 (divide everything by sqrt(3))
-        x1 = (q1 + r1 / 2)
-        y1 = r1 * 3**0.5/2
-        x2 = (q2 + r2 / 2) 
-        y2 = r2 * 3**0.5/2
-
-        # Calculate Euclidean distance 
-        return np.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+    def l2_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
+        """Calculate Euclidean distance for hexagonal grid using cached distances."""
+        return self._l2_distance_cache[(pos1, pos2)]
     
     def get_cells_in_l1_range(self, position: Tuple[int, int], l1_range: int) -> List[BoardCell]:
         """Get all cells within a certain amount of steps from a position in hexagonal grid."""
@@ -817,7 +873,7 @@ class HexBoard(Board):
             for r in range(max(-l1_range, -q - l1_range), min(l1_range, -q + l1_range) + 1):
                 x,y = axial_to_oddr((q0 + q, r0 + r))
                 if self.is_valid_position((x, y)):
-                    cell = self.get_cell((x, y))
+                    cell = self.cells[(x, y)]
                     if cell:
                         results.append(cell)
         return results
@@ -843,6 +899,20 @@ class HexBoard(Board):
                 x,y = axial_to_oddr((q0 + q, r0 + r))
                 if self.is_valid_position((x, y)):
                     if float_less_than_or_equal(self.l2_distance(position, (x, y)), l2_range):
+                        results.append((x, y))
+        return results
+    
+    def get_positions_at_l2_distance(self, position, l2_distance):
+        """Get all positions exactly at a certain Euclidean distance from a position in hexagonal grid."""
+        results = []
+        (q0, r0) = oddr_to_axial(position)
+        max_range = int(l2_distance * 2)  # Approximate max range in hex steps, this is a safe overestimate
+        for q in range(-max_range, max_range + 1):
+            for r in range(max(-max_range, -q - max_range), min(max_range, -q + max_range) + 1):
+                x,y = axial_to_oddr((q0 + q, r0 + r))
+                if self.is_valid_position((x, y)):
+                    distance = self.l2_distance(position, (x, y))
+                    if l2_distance-distance < 1+1e-9 and distance - l2_distance < 1e-9:
                         results.append((x, y))
         return results
 
@@ -895,7 +965,7 @@ class HexBoard(Board):
                 x_offset = (cell_width//2 if (r % 2 == 1) else 0) + c * cell_width
                 y_offset = r * vert_offset
 
-                cell = self.get_cell((c, r))
+                cell = self.cells[(c, r)]
                 if not cell or cell.is_empty() or cell.is_planned():
                     cell_content = f" "
                 else:

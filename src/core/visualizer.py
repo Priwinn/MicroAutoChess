@@ -466,7 +466,7 @@ class PygameBoardVisualizer:
         yellow_highlighted_corners = None
         for x in range(self.board.width):
             for y in range(self.board.height):
-                cell = self.board.get_cell((x, y))
+                cell = self.board.cells[(x, y)]
 
                 # Convert cell coordinates to pixel coordinates
                 px, py = self.board.coord_to_pixel((x, y), self.cell_radius)
@@ -547,7 +547,7 @@ class PygameBoardVisualizer:
             if hovered_unit is None:
                 return
         elif hovered_pos and hovered_pos[0] >= 0:
-            hovered_cell = self.board.get_cell(hovered_pos) if hovered_pos else None
+            hovered_cell = self.board.cells[hovered_pos] if hovered_pos else None
             if hovered_cell and hovered_cell.unit:
                 hovered_unit = hovered_cell.unit
             else:

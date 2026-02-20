@@ -13,7 +13,7 @@ from combat import CombatEngine, CombatEvent, CombatAction
 from player import Player
 import time
 from utils import setup_board_from_config, place_units_from_config
-from levels import LEVELTANKSTEST, TANKSSOLUTION
+from levels import LEVELTANKSTEST, TANKSSOLUTION, TANKSSOLUTIONMIRROR
 
 
 class CombatVisualizer:
@@ -112,6 +112,7 @@ def setup_combat_scenario(debug: bool = False):
     
     # Create board
     board, team1_units, _ = setup_board_from_config(LEVELTANKSTEST)
+    # board, team1_units, _ = setup_board_from_config(TANKSSOLUTIONMIRROR)
     team2_units = place_units_from_config(board, TANKSSOLUTION, team=2)
     
     # Create players and assign units on board

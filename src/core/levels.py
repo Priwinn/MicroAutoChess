@@ -179,3 +179,21 @@ TANKSSOLUTION = {
     'budget_inc': 9
     
 }
+TANKSSOLUTIONMIRROR = {
+    'board_size': (7, 8),
+    # 'board_type': 'diagonal_square',
+    'units': {
+            (1,3): UnitType.TANK,
+            (2,3): UnitType.TANK,
+            (3,3): UnitType.TANK,
+            (4,3): UnitType.TANK,
+            (5,3): UnitType.TANK,
+            (0,3): UnitType.TANK,
+            (0,1): UnitType.ARCHER,
+            (1,0): UnitType.ARCHER,
+            (0,0): UnitType.ARCHER
+            },
+            
+    'budget_inc': 9
+    
+}

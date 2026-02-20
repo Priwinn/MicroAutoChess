@@ -7,8 +7,6 @@ from dataclasses import dataclass, field
 from typing import *
 import numpy as np
 import random
-# from numba.experimental import jitclass
-# from numba import float32
 from damage import Damage
 from spells import AbstractSpell, FireballSpell, AttackSpeedBuffSpell, SelfHealSpell, AssassinBlinkSpell, SpinSlashSpell
 from constant_types import CombatAction, CombatEventType, UnitType, UnitRarity, DamageType
@@ -19,21 +17,7 @@ from combat_event import CombatEvent
 
 
 
-# spec = {
-#     'health': float32,
-#     'attack': float32,
-#     'defense': float32,
-#     'resistance': float32,
-#     'range': float32,
-#     'crit_rate': float32,
-#     'crit_dmg': float32,
-#     'mana': float32,
-#     'max_mana': float32,
-#     'move_speed': float32,
-#     'attack_speed': float32,
-#     'spell': AbstractSpell
-# }
-# @jitclass(spec)
+
 @dataclass
 class UnitStats:
     """Base statistics for a unit."""
@@ -219,28 +203,6 @@ class Unit:
         if crit_roll < self.base_stats.crit_rate:
             return int(base_damage * self.base_stats.crit_dmg), True
         return base_damage, False
-    
-    # def can_upgrade(self, other_units: List['Unit']) -> bool:
-    #     """Check if unit can be upgraded with other units."""
-    #     # Need 3 units of same type and level to upgrade
-    #     same_type_level = [
-    #         u for u in other_units 
-    #         if (u.unit_type == self.unit_type and 
-    #             u.level == self.level and 
-    #             u != self)
-    #     ]
-    #     return len(same_type_level) >= 2
-    
-    # def upgrade(self) -> 'Unit':
-    #     """Create upgraded version of this unit."""
-    #     upgraded = Unit(
-    #         unit_type=self.unit_type,
-    #         rarity=self.rarity,
-    #         team=self.team,
-    #         level=self.level + 1,
-    #         position=self.position
-    #     )
-    #     return upgraded
     
     def to_array(self) -> np.ndarray:
         """Convert unit to numerical array representation."""

@@ -95,13 +95,6 @@ class Board:
         for x in range(self.width):
             for y in range(self.height):
                 self.cells[(x, y)] = BoardCell((x, y))
-    
-    # def get_cell(self, position: Tuple[int, int]) -> BoardCell:
-    #     """Get cell at position."""
-    #     output = self.cells.get(position)
-    #     if output is None:
-    #         raise ValueError(f"Position {position} does not exist on the board")
-    #     return output
 
     def is_valid_position(self, position: Tuple[int, int]) -> bool:
         """Check if position is within board bounds."""
@@ -133,8 +126,6 @@ class Board:
 
     def place_board_unit(self, unit: Unit, position: Tuple[int, int], ) -> bool:
         """Place unit at position in board."""
-        if not self.is_valid_position(position):
-            return False
         
         cell = self.cells[position]
         if not cell or not cell.is_empty():
@@ -155,9 +146,6 @@ class Board:
         if position[0] < 0:
             return self.add_bench_unit(team=-position[0], unit=unit, bench_index=position[1])
         
-        if not self.is_valid_position(position):
-            return False
-        
         cell = self.cells[position]
         if not cell or not cell.is_empty():
             return False
@@ -167,9 +155,7 @@ class Board:
     
     def move_unit(self, from_pos: Tuple[int, int], to_pos: Tuple[int, int]) -> bool:
         """Move unit from one position to another."""
-        if not (self.is_valid_position(from_pos) and self.is_valid_position(to_pos)):
-            return False
-        
+
         from_cell = self.cells[from_pos]
         to_cell = self.cells[to_pos]
         
@@ -387,13 +373,11 @@ class Board:
             
 
     @staticmethod
-    # @njit
     def l1_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Manhattan distance between two positions."""
         raise NotImplementedError("This method should be implemented in subclasses based on board type")
 
     @staticmethod
-    # @njit
     def l2_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Euclidean distance between two positions."""
         raise NotImplementedError("This method should be implemented in subclasses based on board type")
@@ -482,22 +466,16 @@ class Board:
         if team == 1:
             for x in range(self.width):
                 for y in range(0, mid):
-                    if self.is_valid_position((x, y)):
-                        positions.append((x, y))
+                    positions.append((x, y))
         else:
             for x in range(self.width):
                 for y in range(mid, self.height):
-                    if self.is_valid_position((x, y)):
-                        positions.append((x, y))
+                    positions.append((x, y))
         return positions
     
     def find_path(self, start: Tuple[int, int], target: Tuple[int, int]) -> List[Tuple[int, int]]:
         """Simple pathfinding using A* algorithm."""
 
-        if not self.is_valid_position(start) or not self.is_valid_position(target):
-            raise ValueError("Start or target position is out of bounds")
-
-        # A* algorithm setup
         open_set = PriorityQueue()
         open_set.put((0, start))
         came_from = {start: None}
@@ -535,10 +513,6 @@ class Board:
         """Simple pathfinding using A* algorithm. Prefer horizontal movement when distances are equal and
           prefer moves that get closer to target according to l2 distance."""
         
-        if not self.is_valid_position(start) or not self.is_valid_position(target):
-            raise ValueError("Start or target position is out of bounds")
-
-        # A* algorithm setup
         open_set = PriorityQueue()
         open_set.put((0, start))
         came_from = {start: None}
@@ -667,13 +641,11 @@ class SquareBoard(Board):
         self.range_offset = 0.25  
     
     @staticmethod
-    # @njit
     def l1_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Manhattan distance between two positions."""
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
     @staticmethod
-    # @njit
     def l2_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Euclidean distance between two positions."""
         return np.sqrt((pos1[0] - pos2[0]) ** 2 + (pos1[1] - pos2[1]) ** 2)
@@ -845,7 +817,6 @@ class HexBoard(Board):
         return [pos for pos in adjacent if self.is_valid_position(pos)]
     
     @staticmethod
-    # @njit
     def l1_distance(pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Manhattan distance for hexagonal grid using odd-r offset coordinates."""
         x1, y1 = pos1
@@ -860,7 +831,6 @@ class HexBoard(Board):
         # Calculate hex distance in axial coordinates
         return (abs(q1 - q2) + abs(q1 + r1 - q2 - r2) + abs(r1 - r2)) // 2
 
-    # @njit
     def l2_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
         """Calculate Euclidean distance for hexagonal grid using cached distances."""
         return self._l2_distance_cache[(pos1, pos2)]
@@ -915,6 +885,7 @@ class HexBoard(Board):
                     if l2_distance-distance < 1+1e-9 and distance - l2_distance < 1e-9:
                         results.append((x, y))
         return results
+    
 
     def create_hex_cell(self, content=""):
         """

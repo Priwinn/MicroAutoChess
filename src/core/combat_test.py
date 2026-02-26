@@ -342,12 +342,12 @@ if __name__ == "__main__":
     import cProfile
     from pstats import Stats
 
-    pr = cProfile.Profile()
-    pr.enable()
+    # pr = cProfile.Profile()
+    # pr.enable()
 
     time_combat_demo_with_winrates(iterations=10)
 
-    pr.disable()
-    stats = Stats(pr)
-    stats.sort_stats('tottime').print_stats(10)
+    # pr.disable()
+    # stats = Stats(pr)
+    # stats.sort_stats('tottime').print_stats(10)
     # time_combat_demo_with_winrates(iterations=10)  # Adjust iterations for timing

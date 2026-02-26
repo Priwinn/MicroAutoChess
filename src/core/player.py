@@ -171,7 +171,7 @@ class Player:
         for unit in list(self.bench.values()) + list(self.units_on_board.values()):
             if unit is None:
                 continue
-            key = f"{unit.unit_type}_{unit.rarity}"
+            key = f"{unit.unit_type}_{unit.level}"
             if key not in unit_counts:
                 unit_counts[key] = []
             unit_counts[key].append(unit)

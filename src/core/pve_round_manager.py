@@ -15,14 +15,7 @@ class PvERoundManager:
     """
 
     def __init__(self, configs: List[Dict[str, Any]], initial_budget: int = 0):
-        # store provided configs (dicts). Legacy tuple formats are accepted too.
         self.configs: List[Any] = configs
-
-        # store player's initial units snapshot for resets
-        # self.initial_player: Optional[List[Unit]] = None
-        # optional stored starting positions for player and enemy units (list of (x,y))
-        # self.player_positions: Optional[List[Tuple[int, int]]] = None
-        # self.enemy_positions: Optional[List[Tuple[int, int]]] = None
 
         # Budget handling: initial and current player budget
         self.initial_budget = int(initial_budget) + self.configs[0]['budget_inc']
@@ -69,25 +62,6 @@ class PvERoundManager:
         self.round_index = 0
         # reset budget to initial
         self.player_budget = int(self.initial_budget)
-
-
-    # def save_player_positions(self, positions: List[Tuple[int, int]]):
-    #     """Store the player's preferred starting positions (ordered list)."""
-    #     if positions is None:
-    #         self.player_positions = None
-    #     else:
-    #         self.player_positions = list(positions)
-
-    # def save_enemy_positions(self, positions: List[Tuple[int, int]]):
-    #     """Store the enemy preferred starting positions (ordered list)."""
-    #     if positions is None:
-    #         self.enemy_positions = None
-    #     else:
-    #         self.enemy_positions = list(positions)
-
-    # def get_player_snapshot(self) -> List[Unit]:
-    #     """Return fresh clones of the player's initial units."""
-    #     return self._clone_unit_list(self.initial_player)
     
     def setup_round(self) -> Tuple[Board, List[Unit], List[Unit]]:
         """Setup round on a new board and return (board, enemy_units, player_units).

@@ -6,12 +6,12 @@ namespace MicroAutoChess.Core.Spells
     public class FireballSpell : AbstractSpell
     {
         public double Damage { get; private set; } = 250.0;
-        new public int Range { get; private set; } = 5;
 
         public FireballSpell() : base("Fireball")
         {
             Ranged = true;
             SpellDelay = 2;
+            this.Range = 5;
         }
 
         public override bool Prepare(Core.Unit source, Core.Board board)

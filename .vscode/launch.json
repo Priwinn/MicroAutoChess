@@ -25,6 +25,17 @@
       "stopAtEntry": false
     },
     {
+      "name": ".NET Launch (MicroAutoChess.PvP)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build: pvp",
+      "program": "${workspaceFolder}/csharp/MicroAutoChess.PvP/bin/Debug/net10.0/MicroAutoChess.PvP.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/csharp/MicroAutoChess.PvP",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    },
+    {
       "name": "Python: Visualize Combat",
       "type": "debugpy",
       "request": "launch",

@@ -13,7 +13,7 @@ namespace MicroAutoChess.Core
         public int Gold { get; set; }
         public int Level { get; set; }
         public int Experience { get; set; }
-        public int MaxUnitsOnBoard { get; set; } = 1;
+        public int MaxUnitsOnBoard { get; set; } = 5;
 
         // Shop / bench
         public System.Collections.Generic.List<Unit?> ShopUnits { get; set; } = new System.Collections.Generic.List<Unit?>();
@@ -26,10 +26,10 @@ namespace MicroAutoChess.Core
 
         private static readonly Random _rand = new Random();
 
-        public Player(int playerId, GameParams? gameParams = null)
+        public Player(int playerId, Team team, GameParams? gameParams = null)
         {
             PlayerId = playerId;
-            team = Team.NEUTRAL;
+            this.team = team;
             GameParams = gameParams ?? new GameParams();
             Health = GameParams.InitialPlayerHealth;
             Gold = GameParams.InitialPlayerGold;
@@ -121,15 +121,26 @@ namespace MicroAutoChess.Core
             return false;
         }
 
-        public bool AddUnitToBench(Unit unit)
+        public bool AddUnitToBench(Unit unit, int benchIndex = -1)
         {
-            for (int i = 0; i < GameParams.BenchSize; i++)
+            if (benchIndex == -1)
             {
-                if (!Bench.ContainsKey(i) || Bench[i] == null)
+                for (int i = 0; i < GameParams.BenchSize; i++)
                 {
-                    unit.Position = (-PlayerId, i);
-                    Bench[i] = unit;
-                    if (GameParams.UnitLevelUp) CheckUnitLevelUp();
+                    if (!Bench.ContainsKey(i) || Bench[i] == null)
+                    {
+                        unit.Position = (-(int)team, i);
+                        Bench[i] = unit;
+                        return true;
+                    }
+                }
+            }
+            else
+            {
+                if (benchIndex >= 0 && benchIndex < GameParams.BenchSize && (!Bench.ContainsKey(benchIndex) || Bench[benchIndex] == null))
+                {
+                    unit.Position = (-(int)team, benchIndex);
+                    Bench[benchIndex] = unit;
                     return true;
                 }
             }
@@ -166,29 +177,35 @@ namespace MicroAutoChess.Core
             if (UnitsOnBoard.ContainsKey(position) && UnitsOnBoard[position] != null) return false;
             unit.Position = position;
             UnitsOnBoard[position] = unit;
-            if (GameParams.UnitLevelUp) CheckUnitLevelUp();
             return true;
         }
 
         public bool RemoveUnit(Unit unit)
         {
-            foreach (var k in new System.Collections.Generic.List<int>(Bench.Keys))
+            if (unit.Position == null) return false;
+            if (unit.Position.Value.Item1 == -(int)team)
             {
-                if (Bench[k] == unit)
+                int benchIndex = unit.Position.Value.Item2;
+                if (Bench.ContainsKey(benchIndex) && Bench[benchIndex] == unit)
                 {
-                    Bench[k] = null;
+                    Bench[benchIndex] = null;
                     return true;
                 }
             }
-            foreach (var kv in new System.Collections.Generic.List<(int,int)>(UnitsOnBoard.Keys))
+            else if (unit.Position.Value.Item1 >= 0) 
             {
-                if (UnitsOnBoard[kv] == unit)
+                var pos = unit.Position.Value;
+                if (UnitsOnBoard.ContainsKey(pos) && UnitsOnBoard[pos] == unit)
                 {
-                    UnitsOnBoard.Remove(kv);
+                    UnitsOnBoard.Remove(pos);
                     return true;
                 }
             }
+
+
             return false;
+
+
         }
 
         public bool RerollShop()
@@ -204,41 +221,24 @@ namespace MicroAutoChess.Core
         public void GainExperience(int amount)
         {
             Experience += amount;
-            int expNeeded = Level * 2;
-            if (Experience >= expNeeded)
+            while (Level < GameParams.MaxLevel)
             {
+                int needed = XpToNextLevel();
+                if (needed <= 0 || Experience < needed) break;
+                Experience -= needed;
                 Level += 1;
-                Experience -= expNeeded;
+                MaxUnitsOnBoard = Level;
             }
+            // Clamp XP at max level
+            if (Level >= GameParams.MaxLevel)
+                Experience = 0;
         }
 
-        public void CheckUnitLevelUp()
+        /// <summary>XP required to reach the next level, or 0 if already max.</summary>
+        public int XpToNextLevel()
         {
-            var counts = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<Unit>>();
-            foreach (var u in Bench.Values) if (u != null)
-            {
-                string key = $"{u.UnitType}_{u.Level}";
-                if (!counts.ContainsKey(key)) counts[key] = new System.Collections.Generic.List<Unit>();
-                counts[key].Add(u);
-            }
-            foreach (var u in UnitsOnBoard.Values) if (u != null)
-            {
-                string key = $"{u.UnitType}_{u.Rarity}";
-                if (!counts.ContainsKey(key)) counts[key] = new System.Collections.Generic.List<Unit>();
-                counts[key].Add(u);
-            }
-            foreach (var kv in counts)
-            {
-                var list = kv.Value;
-                if (list.Count >= 3)
-                {
-                    var leveled = list[0].Clone();
-                    leveled.LevelUp();
-                    // remove first three
-                    for (int i = 0; i < 3; i++) RemoveUnit(list[i]);
-                    AddUnit(leveled);
-                }
-            }
+            if (Level >= GameParams.MaxLevel) return 0;
+            return GameParams.XpPerLevel[Level];
         }
 
         public void TakeDamage(int damage)
@@ -298,7 +298,7 @@ namespace MicroAutoChess.Core
 
         public Player Clone()
         {
-            var p = new Player(PlayerId, GameParams);
+            var p = new Player(PlayerId, team, GameParams);
             p.Health = Health;
             p.Gold = Gold;
             p.Level = Level;

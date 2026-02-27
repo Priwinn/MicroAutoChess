@@ -1,5 +1,7 @@
+///Notes: we need to block unit level up during battle and check for level up on preparation phase start.
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Linq;
 
 namespace MicroAutoChess.Core
@@ -57,8 +59,9 @@ namespace MicroAutoChess.Core
         // Elimination order (first eliminated = index 0)
         private readonly List<int> _eliminationOrder = new();
 
-        // Thread safety for action processing
-        private readonly object _actionLock = new();
+        // Per-player action queues (players enqueue, tick processes one per player)
+        private readonly Dictionary<int, ConcurrentQueue<PlayerAction>> _actionQueues = new();
+        private readonly Dictionary<int, PlayerActionResult?> _lastActionResults = new();
 
         // Timer tracking
         private DateTime _phaseStartTime;
@@ -103,15 +106,18 @@ namespace MicroAutoChess.Core
 
             for (int i = 1; i <= playerCount; i++)
             {
-                var player = new Player(i, Params) { team = (Team)(((i - 1) % 2) + 1) };
+                var player = new Player(i, (Team)(((i - 1) % 2) + 1), Params);
                 _players[i] = player;
                 _alivePlayers.Add(i);
 
                 var board = CreateBoard();
-                var p1Placeholder = new Player(0);
-                board.Players[Team.TEAM_1] = p1Placeholder;
-                board.Players[Team.TEAM_2] = player;
+                Team oppositeTeam = player.team == Team.TEAM_1 ? Team.TEAM_2 : Team.TEAM_1;
+                board.Players[player.team] = player;
+                board.Players[oppositeTeam] = new Player(0, oppositeTeam);
                 _boards[i] = board;
+
+                _actionQueues[i] = new ConcurrentQueue<PlayerAction>();
+                _lastActionResults[i] = null;
             }
         }
 
@@ -127,10 +133,30 @@ namespace MicroAutoChess.Core
         public IReadOnlyList<int> EliminationOrder => _eliminationOrder.AsReadOnly();
         public int PlayerCount => _players.Count;
 
+        /// <summary>Build a PlayerGameState snapshot for a given player.</summary>
+        public PlayerGameState GetGameStateForPlayer(int playerId)
+        {
+            return new PlayerGameState(playerId, _players[playerId], _boards[playerId], Params, CurrentRound);
+        }
+
         /// <summary>Get the CombatEngine for a player's current-round fight (only valid during COMBAT phase).</summary>
         public CombatEngine? GetCombatEngine(int playerId)
         {
             return _combatEngines.TryGetValue(playerId, out var engine) ? engine : null;
+        }
+
+        /// <summary>
+        /// Get the host player ID for a given player's combat pairing.
+        /// The host's board contains the active CombatEngine.
+        /// Returns null if the player has no active pairing.
+        /// </summary>
+        public int? GetCombatHostForPlayer(int playerId)
+        {
+            if (_combatEngines.ContainsKey(playerId)) return playerId;
+            var pairing = _currentPairings?.FirstOrDefault(p => p.Player2Id == playerId);
+            if (pairing != null && _combatEngines.ContainsKey(pairing.Player1Id))
+                return pairing.Player1Id;
+            return null;
         }
 
         /// <summary>Seconds remaining in the current phase timer.</summary>
@@ -295,8 +321,8 @@ namespace MicroAutoChess.Core
                     bool team2Alive = board.GetUnitsByTeam(Team.TEAM_2).Any(u => u.IsAlive());
 
                     int result;
-                    if (team1Alive && !team2Alive) result = 1;       // opponent won on host board
-                    else if (!team1Alive && team2Alive) result = 2;  // host won
+                    if (team1Alive && !team2Alive) result = 1;       // TEAM_1 won
+                    else if (!team1Alive && team2Alive) result = 2;  // TEAM_2 won
                     else result = 0;                                  // draw or both dead
 
                     // If combat wasn't fully stepped, run remaining frames
@@ -424,43 +450,82 @@ namespace MicroAutoChess.Core
         // =====================================================================
 
         /// <summary>
-        /// Process a player action. Thread-safe. Validates phase, player state, and applies the action.
-        /// During COMBAT phase, only bench/shop/leveling actions are allowed (no board moves).
+        /// Enqueue a player action for processing on the next tick.
+        /// Actions are not executed immediately — they sit in a per-player queue
+        /// and are processed one per player per tick by ProcessPendingActions().
         /// </summary>
-        public PlayerActionResult ProcessAction(PlayerAction action)
+        public void EnqueueAction(PlayerAction action)
         {
-            lock (_actionLock)
+            if (_actionQueues.TryGetValue(action.PlayerId, out var queue))
+                queue.Enqueue(action);
+        }
+
+        /// <summary>
+        /// Get the result of the last action processed for a given player.
+        /// Returns null if no action has been processed yet.
+        /// </summary>
+        public PlayerActionResult? GetLastActionResult(int playerId)
+        {
+            return _lastActionResults.TryGetValue(playerId, out var result) ? result : null;
+        }
+
+        /// <summary>
+        /// Process one queued action per player. Call this at a fixed tick rate
+        /// from the orchestrator. All alive players are processed each tick.
+        /// </summary>
+        public void ProcessPendingActions()
+        {
+            foreach (var playerId in _alivePlayers)
             {
-                if (Phase == PvPGamePhase.GAME_OVER)
-                    return PlayerActionResult.Fail("Game is over");
+                if (!_actionQueues.TryGetValue(playerId, out var queue)) continue;
+                if (!queue.TryDequeue(out var action)) continue;
 
-                if (Phase == PvPGamePhase.ROUND_END)
-                    return PlayerActionResult.Fail("Round is ending — wait for next phase");
-
-                if (!_players.ContainsKey(action.PlayerId))
-                    return PlayerActionResult.Fail("Invalid player ID");
-
-                if (!_alivePlayers.Contains(action.PlayerId))
-                    return PlayerActionResult.Fail("Player is eliminated");
-
-                // During COMBAT, only allow limited actions (bench/shop/leveling, no board moves)
-                if (Phase == PvPGamePhase.COMBAT)
-                {
-                    if (action.ActionType == PlayerActionType.MOVE_UNIT)
-                        return PlayerActionResult.Fail("Cannot move units on the board during combat");
-                }
-
-                return action.ActionType switch
-                {
-                    PlayerActionType.BUY_UNIT => HandleBuyUnit(action),
-                    PlayerActionType.SELL_UNIT => HandleSellUnit(action),
-                    PlayerActionType.REROLL_SHOP => HandleRerollShop(action),
-                    PlayerActionType.MOVE_UNIT => HandleMoveUnit(action),
-                    PlayerActionType.BUY_EXPERIENCE => HandleBuyExperience(action),
-                    PlayerActionType.LOCK_SHOP => HandleLockShop(action),
-                    _ => PlayerActionResult.Fail($"Unknown action type: {action.ActionType}")
-                };
+                _lastActionResults[playerId] = ExecuteAction(action);
             }
+        }
+
+        /// <summary>
+        /// Clear all pending actions for every player. Call before phase transitions.
+        /// </summary>
+        public void ClearAllActionQueues()
+        {
+            foreach (var q in _actionQueues.Values)
+            {
+                while (q.TryDequeue(out _)) { }
+            }
+        }
+
+        private PlayerActionResult ExecuteAction(PlayerAction action)
+        {
+            if (Phase == PvPGamePhase.GAME_OVER)
+                return PlayerActionResult.Fail("Game is over");
+
+            if (Phase == PvPGamePhase.ROUND_END)
+                return PlayerActionResult.Fail("Round is ending — wait for next phase");
+
+            if (!_players.ContainsKey(action.PlayerId))
+                return PlayerActionResult.Fail("Invalid player ID");
+
+            if (!_alivePlayers.Contains(action.PlayerId))
+                return PlayerActionResult.Fail("Player is eliminated");
+
+            // During COMBAT, only allow limited actions (bench/shop/leveling, no board moves)
+            if (Phase == PvPGamePhase.COMBAT)
+            {
+                if (action.ActionType == PlayerActionType.MOVE_UNIT)
+                    return PlayerActionResult.Fail("Cannot move units on the board during combat");
+            }
+
+            return action.ActionType switch
+            {
+                PlayerActionType.BUY_UNIT => HandleBuyUnit(action),
+                PlayerActionType.SELL_UNIT => HandleSellUnit(action),
+                PlayerActionType.REROLL_SHOP => HandleRerollShop(action),
+                PlayerActionType.MOVE_UNIT => HandleMoveUnit(action),
+                PlayerActionType.BUY_EXPERIENCE => HandleBuyExperience(action),
+                PlayerActionType.LOCK_SHOP => HandleLockShop(action),
+                _ => PlayerActionResult.Fail($"Unknown action type: {action.ActionType}")
+            };
         }
 
         // =====================================================================
@@ -496,7 +561,6 @@ namespace MicroAutoChess.Core
 
             player.Gold -= cost;
             unit.Team = player.team;
-            player.AddUnitToBench(unit);
 
             var board = _boards[action.PlayerId];
             board.AddBenchUnit(player.team, unit);
@@ -680,69 +744,81 @@ namespace MicroAutoChess.Core
 
             board.ResetBoard();
 
-            // Clone opponent's units and place them as TEAM_1 (enemy, top half)
-            var opponentClones = new List<Unit>();
-            foreach (var kv in opponentPlayer.UnitsOnBoard)
+            // Preserve original team identities so colors stay consistent.
+            // The player who was TEAM_1 (blue) stays TEAM_1 in combat, etc.
+            var team1Source = hostPlayer.team == Team.TEAM_1 ? hostPlayer : opponentPlayer;
+            var team2Source = hostPlayer.team == Team.TEAM_1 ? opponentPlayer : hostPlayer;
+
+            var combatTeam1 = new Player(team1Source.PlayerId, Team.TEAM_1, Params);
+            var combatTeam2 = new Player(team2Source.PlayerId, Team.TEAM_2, Params);
+
+            // Copy bench from real players so it renders during combat
+            foreach (var kv in team1Source.Bench)
+                combatTeam1.Bench[kv.Key] = kv.Value;
+            foreach (var kv in team2Source.Bench)
+                combatTeam2.Bench[kv.Key] = kv.Value;
+
+            // Assign combat players to the board BEFORE placing any units,
+            // so that PlaceBoardUnit side effects target these throwaway
+            // combat players, not the real persistent ones.
+            board.Players[Team.TEAM_1] = combatTeam1;
+            board.Players[Team.TEAM_2] = combatTeam2;
+
+            // Clone TEAM_1 source's units — already in TEAM_1 zone (top half)
+            foreach (var kv in team1Source.UnitsOnBoard)
             {
                 if (kv.Value == null) continue;
                 var clone = kv.Value.Clone();
                 clone.Team = Team.TEAM_1;
+                clone.InitialPosition = clone.Position;
+                clone.RoundReset();
                 if (clone.Position.HasValue)
-                {
-                    var (x, y) = clone.Position.Value;
-                    int mirroredY = board.Height - 1 - y;
-                    clone.Position = (x, mirroredY);
-                    clone.InitialPosition = clone.Position;
-                }
-                opponentClones.Add(clone);
-            }
-
-            var enemyPlayer = new Player(opponentPlayer.PlayerId, Params) { team = Team.TEAM_1 };
-            foreach (var clone in opponentClones)
-            {
-                if (clone.Position.HasValue)
-                {
                     board.PlaceBoardUnit(clone, clone.Position.Value);
-                    enemyPlayer.UnitsOnBoard[clone.Position.Value] = clone;
-                }
             }
 
-            // Place host's units (TEAM_2, bottom half)
-            foreach (var kv in hostPlayer.UnitsOnBoard)
+            // Clone TEAM_2 source's units — already in TEAM_2 zone (bottom half)
+            foreach (var kv in team2Source.UnitsOnBoard)
             {
                 if (kv.Value == null) continue;
-                var u = kv.Value;
-                u.RoundReset();
-                u.Team = Team.TEAM_2;
-                if (u.Position.HasValue)
-                    board.PlaceBoardUnit(u, u.Position.Value);
+                var clone = kv.Value.Clone();
+                clone.Team = Team.TEAM_2;
+                clone.InitialPosition = clone.Position;
+                clone.RoundReset();
+                if (clone.Position.HasValue)
+                    board.PlaceBoardUnit(clone, clone.Position.Value);
             }
 
-            board.Players[Team.TEAM_1] = enemyPlayer;
-            board.Players[Team.TEAM_2] = hostPlayer;
-
-            var engine = new CombatEngine(board, enemyPlayer, hostPlayer, combatSeed: combatSeed);
+            var engine = new CombatEngine(board, combatTeam1, combatTeam2, combatSeed: combatSeed);
             _combatEngines[pairing.Player1Id] = engine;
         }
 
         private void RecordCombatResult(MatchPairing pairing, CombatEngine engine, int result)
         {
-            int survivingEnemyUnits = 0;
+            // result: 1 = TEAM_1 won, 2 = TEAM_2 won, 0 = draw
+            // Map to CombatResult.Winner: 1 = Player1Id (host) won, 2 = Player2Id (opponent) won
+            var hostPlayer = _players[pairing.Player1Id];
+            int mappedWinner = 0;
+            if (result == 1)
+                mappedWinner = hostPlayer.team == Team.TEAM_1 ? 1 : 2;
+            else if (result == 2)
+                mappedWinner = hostPlayer.team == Team.TEAM_2 ? 1 : 2;
+
+            int survivingWinnerUnits = 0;
             var board = _boards[pairing.Player1Id];
             if (result == 1)
-                survivingEnemyUnits = board.GetUnitsByTeam(Team.TEAM_1).Count(u => u.IsAlive());
+                survivingWinnerUnits = board.GetUnitsByTeam(Team.TEAM_1).Count(u => u.IsAlive());
             else if (result == 2)
-                survivingEnemyUnits = board.GetUnitsByTeam(Team.TEAM_2).Count(u => u.IsAlive());
+                survivingWinnerUnits = board.GetUnitsByTeam(Team.TEAM_2).Count(u => u.IsAlive());
 
-            int damage = Params.BaseCombatDamage + survivingEnemyUnits;
+            int damage = Params.BaseCombatDamage + survivingWinnerUnits;
 
             _lastRoundResults.Add(new CombatResult
             {
                 Player1Id = pairing.Player1Id,
                 Player2Id = pairing.Player2Id,
-                Winner = result,
+                Winner = mappedWinner,
                 DamageToLoser = damage,
-                SurvivingUnits = survivingEnemyUnits,
+                SurvivingUnits = survivingWinnerUnits,
                 IsGhostMatch = pairing.IsGhostMatch
             });
         }
@@ -753,13 +829,23 @@ namespace MicroAutoChess.Core
             var board = _boards[playerId];
             board.ResetBoard();
 
-            foreach (var kv in player.UnitsOnBoard.ToList())
+            // Restore board player mapping (combat may have overwritten it)
+            Team oppositeTeam = player.team == Team.TEAM_1 ? Team.TEAM_2 : Team.TEAM_1;
+            board.Players[player.team] = player;
+            board.Players[oppositeTeam] = new Player(0, oppositeTeam);
+
+            // Snapshot units using their actual Position (cell-tracking keeps it
+            // current even after board-to-board moves whose dict keys may be stale).
+            var units = player.UnitsOnBoard.Values
+                .Where(u => u != null && u.Position.HasValue).ToList();
+            player.UnitsOnBoard.Clear();
+
+            foreach (var u in units)
             {
-                if (kv.Value == null) continue;
-                var u = kv.Value;
+                u.InitialPosition = u.Position;
                 u.RoundReset();
-                if (u.Position.HasValue)
-                    board.PlaceBoardUnit(u, u.Position.Value);
+                u.Team = player.team;
+                board.PlaceBoardUnit(u, u.Position!.Value);
             }
         }
 

@@ -343,8 +343,8 @@ namespace MicroAutoChess.Core
                 if (!unit.IsAlive() && unit.Position.HasValue)
                 {
                     CombatLog.Add(new CombatEvent { FrameNumber = FrameNumber, Source = null, Target = unit, EventType = CombatEventType.UNIT_DIED, Description = $"{unit.UnitType} is defeated!" });
-                    _board.RemoveUnit(unit.Position.Value);
-                    if (unit.PlannedPosition.HasValue) _board.RemoveUnit(unit.PlannedPosition.Value);
+                    _board.RemoveUnitFromCell(unit.Position.Value);
+                    if (unit.PlannedPosition.HasValue) _board.RemoveUnitFromCell(unit.PlannedPosition.Value);
                     ActionQueue = ActionQueue.Where(a => a.Unit != unit).ToList();
                 }
             }

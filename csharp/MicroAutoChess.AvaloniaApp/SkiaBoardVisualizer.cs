@@ -73,11 +73,19 @@ namespace MicroAutoChess.AvaloniaApp
 		// Performance flags
 		public bool UseAntialiasing { get; set; } = false;
 
+		/// <summary>
+		/// The team of the viewing player. When TEAM_1, the board is mirrored
+		/// so the viewer's units always appear at the bottom.
+		/// </summary>
+		public Team ViewerTeam { get; set; } = Team.TEAM_2;
+		private int _mirrorSumX;
+		private int _mirrorSumY;
+
 		public SkiaBoardVisualizer(Board board, int renderFps = 30, int cellRadius = 28, int margin = 16, int? windowWidth = null, int? windowHeight = null, int? leftOffset = null, int? topMargin = null)
 		{
 			Board = board ?? throw new ArgumentNullException(nameof(board));
 			RenderFps = renderFps;
-			Margin = margin;
+			Margin = (int) cellRadius;
 
 			int desiredW = windowWidth ?? 1280;
 			int desiredH = windowHeight ?? 800;
@@ -109,6 +117,29 @@ namespace MicroAutoChess.AvaloniaApp
 
 			if (leftOffset.HasValue) LeftOffset = leftOffset.Value;
 			if (topMargin.HasValue) TopMargin = topMargin.Value;
+
+			// Precompute board pixel extents for mirror support
+			int minBPx = int.MaxValue, maxBPx = int.MinValue;
+			int minBPy = int.MaxValue, maxBPy = int.MinValue;
+			foreach (var cellKey in Board.Cells.Keys)
+			{
+				var (bpx, bpy) = Board.CoordToPixel(cellKey, CellRadius);
+				if (bpx < minBPx) minBPx = bpx; if (bpx > maxBPx) maxBPx = bpx;
+				if (bpy < minBPy) minBPy = bpy; if (bpy > maxBPy) maxBPy = bpy;
+			}
+			_mirrorSumX = (Board.Cells.Count > 0) ? minBPx + maxBPx : 0;
+			_mirrorSumY = (Board.Cells.Count > 0) ? minBPy + maxBPy : 0;
+		}
+
+		/// <summary>
+		/// CoordToPixel wrapper that mirrors both axes when ViewerTeam is TEAM_1,
+		/// so the viewer's units always appear at the bottom of the board.
+		/// </summary>
+		public (int, int) CellPixel((int, int) cellPos)
+		{
+			var (px, py) = Board.CoordToPixel(cellPos, CellRadius);
+			if (ViewerTeam == Team.TEAM_1) { px = _mirrorSumX - px; py = _mirrorSumY - py; }
+			return (px, py);
 		}
 
 		// Drag helpers ---------------------------------------------------------
@@ -125,7 +156,7 @@ namespace MicroAutoChess.AvaloniaApp
 			foreach (var kv in Board.Cells)
 			{
 				var cellPos = kv.Key;
-				var cellPix = Board.CoordToPixel(cellPos, CellRadius);
+				var cellPix = CellPixel(cellPos);
 				int centerX = cellPix.Item1 + LeftOffset + Margin;
 				int centerY = cellPix.Item2 + TopMargin + CellRadius + 4;
 				var corners = Board.GetCellCorners((centerX, centerY), CellRadius);
@@ -168,17 +199,18 @@ namespace MicroAutoChess.AvaloniaApp
 		public bool BeginDragAt(int mouseX, int mouseY)
 		{
 			// hit-test bench cells first
-			// Only allow dragging from player (team 2) bench: check bottom bench cells
+			// Only allow dragging from viewer's bench
+			int viewerBenchRow = -(int)ViewerTeam;
 			for (int col = 0; col < Board.BenchSize; col++)
 			{
-				var botCenter = GetBenchCellCenter((-2, col));
-				if (botCenter.HasValue)
+				var benchCenter = GetBenchCellCenter((viewerBenchRow, col));
+				if (benchCenter.HasValue)
 				{
-					var corners = GetBenchCellCorners(botCenter.Value, CellRadius);
+					var corners = GetBenchCellCorners(benchCenter.Value, CellRadius);
 					if (PointInPolygon(mouseX, mouseY, corners))
 					{
-						var unit = Board.GetBenchUnit(Team.TEAM_2, col);
-						if (unit != null) { _draggedUnit = Board.RemoveBenchUnit(Team.TEAM_2, col); _dragFrom = (-2, col); HighlightPlayerInitialZone = true; return true; }
+						var unit = Board.GetBenchUnit(ViewerTeam, col);
+						if (unit != null) { _draggedUnit = unit; _dragFrom = (viewerBenchRow, col); HighlightPlayerInitialZone = true; return true; }
 					}
 				}
 			}
@@ -187,16 +219,16 @@ namespace MicroAutoChess.AvaloniaApp
 			foreach (var kv in Board.Cells)
 			{
 				var pos = kv.Key;
-				var pix = Board.CoordToPixel(pos, CellRadius);
+				var pix = CellPixel(pos);
 				int centerX = pix.Item1 + LeftOffset + Margin;
 				int centerY = pix.Item2 + TopMargin + CellRadius + 4;
 				var corners = Board.GetCellCorners((centerX, centerY), CellRadius);
 				if (PointInPolygon(mouseX, mouseY, corners))
 				{
 					var cell = Board.Cells[pos];
-					if (cell != null && cell.Unit != null && cell.Unit.Team == Team.TEAM_2)
+					if (cell != null && cell.Unit != null && cell.Unit.Team == ViewerTeam)
 					{
-						_draggedUnit = Board.RemoveUnit(pos);
+						_draggedUnit = cell.Unit;
 						_dragFrom = pos;
 						HighlightPlayerInitialZone = true;
 						return true;
@@ -213,7 +245,7 @@ namespace MicroAutoChess.AvaloniaApp
 			foreach (var kv in Board.Cells)
 			{
 				var cellPos = kv.Key;
-				var cellPix = Board.CoordToPixel(cellPos, CellRadius);
+				var cellPix = CellPixel(cellPos);
 				int centerX = cellPix.Item1 + LeftOffset + Margin;
 				int centerY = cellPix.Item2 + TopMargin + CellRadius + 4;
 				var corners = Board.GetCellCorners((centerX, centerY), CellRadius);
@@ -264,7 +296,7 @@ namespace MicroAutoChess.AvaloniaApp
 		}
 
 		// Primary draw entry used by the Avalonia host (placeholder)
-		public void Draw(SKCanvas canvas, int width, int height, CombatEngine? engine, int simFrame, float simProgress, bool paused = false, int mouseX = 0, int mouseY = 0, System.Collections.Generic.List<(MicroAutoChess.Core.UnitType ut, int? cost)>? spawnSpecs = null, int? spawnBudget = null, double engineFps = 10.0)
+		public void Draw(SKCanvas canvas, int width, int height, CombatEngine? engine, int simFrame, float simProgress, bool paused = false, int mouseX = 0, int mouseY = 0, System.Collections.Generic.List<(MicroAutoChess.Core.UnitType ut, int? cost)>? spawnSpecs = null, int? spawnBudget = null, double engineFps = 10.0, Player? player = null, GameParams? gameParams = null)
 		{
 			// Clear background
 			canvas.Clear(BgColor);
@@ -291,6 +323,7 @@ namespace MicroAutoChess.AvaloniaApp
 			DrawSpeedButtons(canvas, engineFps);
 			DrawPauseButton(canvas, paused);
 			DrawSpawnButtons(canvas, spawnSpecs, spawnBudget, mouseX, mouseY);
+			DrawShopPanel(canvas, spawnSpecs?.Count ?? 5, spawnBudget, player, gameParams, mouseX, mouseY);
 			DrawHoverTooltip(canvas, mouseX, mouseY);
 			if (_draggedUnit != null)
 			{
@@ -459,7 +492,7 @@ namespace MicroAutoChess.AvaloniaApp
 				if (!sPos.HasValue) return;
 				(int, int) pixel = sPos.Value;
 
-				var pxy = Board.CoordToPixel(pixel, CellRadius);
+				var pxy = CellPixel(pixel);
 				int cx = pxy.Item1 + LeftOffset + Margin;
 				int cy = pxy.Item2 + TopMargin + CellRadius + 4;
 
@@ -527,7 +560,7 @@ namespace MicroAutoChess.AvaloniaApp
 
 			// convert pos to pixel
 			var pcell = pos.Value;
-			var pix = Board.CoordToPixel(pcell, CellRadius);
+			var pix = CellPixel(pcell);
 			int cx = pix.Item1 + LeftOffset + Margin;
 			int cy = pix.Item2 + TopMargin + CellRadius + 4;
 
@@ -561,7 +594,7 @@ namespace MicroAutoChess.AvaloniaApp
 			var target = ev.Target;
 			if (!pos.HasValue && target != null) pos = target.Position;
 			if (!pos.HasValue) { _seenEvents.Add(id); return; }
-			var pix = Board.CoordToPixel(pos.Value, CellRadius);
+			var pix = CellPixel(pos.Value);
 			int cx = pix.Item1 + LeftOffset + Margin;
 			int cy = pix.Item2 + TopMargin + CellRadius + 4;
 
@@ -586,8 +619,8 @@ namespace MicroAutoChess.AvaloniaApp
 			double t = (simFrame + simProgress - startF) / (double)denom;
 			t = Math.Max(0.0, Math.Min(1.0, t));
 
-			var s = Board.CoordToPixel(action.StartPosition.Value, CellRadius);
-			var e = Board.CoordToPixel(action.TargetPosition.Value, CellRadius);
+			var s = CellPixel(action.StartPosition.Value);
+			var e = CellPixel(action.TargetPosition.Value);
 			int cx1 = s.Item1 + LeftOffset + Margin;
 			int cy1 = s.Item2 + TopMargin + CellRadius + 4;
 			int cx2 = e.Item1 + LeftOffset + Margin;
@@ -609,8 +642,8 @@ namespace MicroAutoChess.AvaloniaApp
 			double t = (simFrame + simProgress - startF) / (double)denom;
 			t = Math.Max(0.0, Math.Min(1.0, t));
 
-			var s = Board.CoordToPixel(action.StartPosition.Value, CellRadius);
-			var e = Board.CoordToPixel(action.Target.Position.Value, CellRadius);
+			var s = CellPixel(action.StartPosition.Value);
+			var e = CellPixel(action.Target.Position.Value);
 			int cx1 = s.Item1 + LeftOffset + Margin;
 			int cy1 = s.Item2 + TopMargin + CellRadius + 4;
 			int cx2 = e.Item1 + LeftOffset + Margin;
@@ -636,7 +669,7 @@ namespace MicroAutoChess.AvaloniaApp
 			double t = (simFrame + simProgress - startF) / (double)denom;
 			t = Math.Max(0.0, Math.Min(1.0, t));
 
-			var s = Board.CoordToPixel(action.StartPosition.Value, CellRadius);
+			var s = CellPixel(action.StartPosition.Value);
 			int cx1 = s.Item1 + LeftOffset + Margin;
 			int cy1 = s.Item2 + TopMargin + CellRadius + 4;
 
@@ -645,7 +678,7 @@ namespace MicroAutoChess.AvaloniaApp
 			else if (action.TargetPosition.HasValue) targetPos = action.TargetPosition.Value;
 			if (!targetPos.HasValue) return;
 
-			var e = Board.CoordToPixel(targetPos.Value, CellRadius);
+			var e = CellPixel(targetPos.Value);
 			int cx2 = e.Item1 + LeftOffset + Margin;
 			int cy2 = e.Item2 + TopMargin + CellRadius + 4;
 
@@ -662,10 +695,11 @@ namespace MicroAutoChess.AvaloniaApp
 			// Precompute player-2 initial positions when highlighting is requested
 			var player2Initial = new HashSet<(int,int)>();
 			if (HighlightPlayerInitialZone) {
-				foreach (var p in Board.GetInitialPositions(Team.TEAM_2)) player2Initial.Add(p);
+				foreach (var p in Board.GetInitialPositions(ViewerTeam)) player2Initial.Add(p);
 			}
 
 			List<(int,int)>? yellowHighlightedCorners = null;
+			List<List<(int,int)>> initialZoneCornersList = new();
 
 			for (int x = 0; x < Board.Width; x++)
 			{
@@ -674,7 +708,7 @@ namespace MicroAutoChess.AvaloniaApp
 					var cell = Board.Cells[(x, y)];
 
 					// Convert cell coordinates to pixel coordinates
-					var pix = Board.CoordToPixel((x, y), CellRadius);
+					var pix = CellPixel((x, y));
 					int px = pix.Item1;
 					int py = pix.Item2;
 					int centerX = (int)(px + LeftOffset + Margin);
@@ -691,10 +725,10 @@ namespace MicroAutoChess.AvaloniaApp
 
 
 					// If we're showing the player's initial placement zone while dragging,
-					// draw those board cells with a white outline (matches bench highlighting).
+					// defer those cells to be drawn on top after all normal cells.
 					if (HighlightPlayerInitialZone && player2Initial.Contains((x, y)))
 					{
-						DrawPolygon(canvas, corners, new SKColor(255,255,255), 2);
+						initialZoneCornersList.Add(new List<(int,int)>(corners));
 					}
 					else if (highlightedPositions.Contains((x, y)))
 					{
@@ -705,8 +739,8 @@ namespace MicroAutoChess.AvaloniaApp
 						DrawPolygon(canvas, corners, GridColor, 2);
 					}
 
-					// Draw unit if present and not moving (moving units drawn separately)
-					if (cell != null && cell.Unit != null && !movingMap.ContainsKey(cell.Unit.Id))
+					// Draw unit if present, not moving, and not being dragged
+					if (cell != null && cell.Unit != null && !movingMap.ContainsKey(cell.Unit.Id) && cell.Unit != _draggedUnit)
 					{
 						var unit = cell.Unit;
 						var team = unit.Team;
@@ -751,6 +785,12 @@ namespace MicroAutoChess.AvaloniaApp
 						DrawRect(canvas, hbX, mbY, (int)(barW * manaRatio), barH, new SKColor(80,140,220));
 					}
 				}
+			}
+
+			// Draw initial zone highlights on top of normal cells
+			foreach (var izCorners in initialZoneCornersList)
+			{
+				DrawPolygon(canvas, izCorners, new SKColor(255,255,255), 2);
 			}
 
 			// Draw yellow highlight on top if requested
@@ -949,7 +989,7 @@ namespace MicroAutoChess.AvaloniaApp
 					var cells = Board.GetCellsInL1Range(pos, radius);
 					foreach (var c in cells)
 					{
-						var pix = Board.CoordToPixel(c.Position, CellRadius);
+						var pix = CellPixel(c.Position);
 						int centerX = (int)(pix.Item1 + LeftOffset + Margin);
 						int centerY = (int)(pix.Item2 + TopMargin + CellRadius + 4);
 						var corners = Board.GetCellCorners((centerX, centerY), CellRadius);
@@ -1252,7 +1292,7 @@ namespace MicroAutoChess.AvaloniaApp
 			foreach (var kv in Board.Cells)
 			{
 				var cellPos = kv.Key;
-				var cellPix = Board.CoordToPixel(cellPos, CellRadius);
+				var cellPix = CellPixel(cellPos);
 				int centerX = cellPix.Item1 + LeftOffset + Margin;
 				int centerY = cellPix.Item2 + TopMargin + CellRadius + 4;
 				var corners = Board.GetCellCorners((centerX, centerY), CellRadius);
@@ -1388,7 +1428,7 @@ namespace MicroAutoChess.AvaloniaApp
 			int boxH = pad + titleH + spacing + Math.Max(bar_h, (int)hpRect.Height) + spacing + Math.Max(bar_h, (int)manaRect.Height) + spacing + statsH + spacing + (int)spellRect.Height + spacing + descH + pad;
 
 			// position near unit center
-			var pix = pos.Value.Item1 < 0 ? GetBenchCellCenter((pos.Value.Item1, pos.Value.Item2)) ?? (LeftOffset + Margin, TopMargin + CellRadius) : Board.CoordToPixel((pos.Value.Item1, pos.Value.Item2), CellRadius);
+			var pix = pos.Value.Item1 < 0 ? GetBenchCellCenter((pos.Value.Item1, pos.Value.Item2)) ?? (LeftOffset + Margin, TopMargin + CellRadius) : CellPixel((pos.Value.Item1, pos.Value.Item2));
 			int cx = pix.Item1 + LeftOffset + Margin;
 			int cy = pix.Item2 + TopMargin + CellRadius + 4;
 			int bx = cx + 16;
@@ -1554,27 +1594,116 @@ namespace MicroAutoChess.AvaloniaApp
 			return new SKRect(bx, by, bx + btnW, by + btnH);
 		}
 
+		/// <summary>
+		/// Returns the rect for the Buy XP button, positioned to the left of the shop,
+		/// stacked on top of the Reroll button.
+		/// </summary>
+		public SKRect GetBuyXpButtonRect(int shopTotal = 5)
+		{
+			var firstShop = GetSpawnButtonRect(0, shopTotal);
+			int btnW = (int)(CellRadius * 2.8);
+			int btnH = (int)(firstShop.Height * 0.48f);
+			int gap = 4;
+			int bx = (int)firstShop.Left - btnW - 12;
+			int by = (int)firstShop.Top;
+			return new SKRect(bx, by, bx + btnW, by + btnH);
+		}
+
+		/// <summary>
+		/// Returns the rect for the Reroll button, positioned below Buy XP.
+		/// </summary>
+		public SKRect GetRerollButtonRect(int shopTotal = 5)
+		{
+			var buyXp = GetBuyXpButtonRect(shopTotal);
+			int btnH = (int)buyXp.Height;
+			int gap = (int)(CellRadius * 0.08f) + 4;
+			float by = buyXp.Bottom + gap;
+			return new SKRect(buyXp.Left, by, buyXp.Right, by + btnH);
+		}
+
+		/// <summary>
+		/// Draws the shop panel: gold label on top, Buy XP button, Reroll button,
+		/// all stacked to the left of the shop spawn buttons.
+		/// </summary>
+		public void DrawShopPanel(SKCanvas canvas, int shopTotal, int? gold, Player? player, GameParams? gameParams, int mouseX, int mouseY)
+		{
+			var buyXpRect = GetBuyXpButtonRect(shopTotal);
+			var rerollRect = GetRerollButtonRect(shopTotal);
+
+			int level = player?.Level ?? 1;
+			int xp = player?.Experience ?? 0;
+			int xpToNext = player?.XpToNextLevel() ?? 0;
+			int rerollCost = gameParams?.RerollCost ?? 2;
+			int buyXpCost = gameParams?.BuyXpCost ?? 4;
+			int buyXpAmount = gameParams?.BuyXpAmount ?? 4;
+
+			bool canBuyXp = gold.HasValue && gold.Value >= buyXpCost && xpToNext > 0;
+			bool canReroll = gold.HasValue && gold.Value >= rerollCost;
+
+			// Gold text above the two buttons
+			if (gold.HasValue)
+			{
+				string goldText = $"Gold: {gold.Value}";
+				float goldX = (buyXpRect.Left + buyXpRect.Right) / 2f;
+				float goldY = buyXpRect.Top - Math.Max(8, TooltipFontSize * 0.7f);
+				DrawText(canvas, goldText, Math.Max(12, TooltipFontSize + 2), new SKColor(255, 215, 0), goldX, goldY);
+			}
+
+			// Level / XP text below Reroll button
+			{
+				string lvlText = xpToNext > 0 ? $"Lv {level} ({xp}/{xpToNext} XP)" : $"Lv {level} (MAX)";
+				float lvlX = (buyXpRect.Left + buyXpRect.Right) / 2f;
+				float lvlY = rerollRect.Bottom + Math.Max(8, TooltipFontSize * 0.7f);
+				DrawText(canvas, lvlText, Math.Max(10, TooltipFontSize - 1), new SKColor(180, 220, 255), lvlX, lvlY);
+			}
+
+			// Buy XP button
+			{
+				bool hovered = mouseX >= buyXpRect.Left && mouseX <= buyXpRect.Right && mouseY >= buyXpRect.Top && mouseY <= buyXpRect.Bottom;
+				var bg = !canBuyXp ? new SKColor(60, 60, 60) : hovered ? new SKColor(50, 100, 160) : new SKColor(40, 80, 130);
+				using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = bg, IsAntialias = UseAntialiasing }) canvas.DrawRoundRect(buyXpRect, 6, 6, p);
+				using (var p2 = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(140, 140, 140), StrokeWidth = 1, IsAntialias = UseAntialiasing }) canvas.DrawRoundRect(buyXpRect, 6, 6, p2);
+				string label = $"Buy XP ({buyXpCost}g)";
+				var col = canBuyXp ? new SKColor(255, 255, 255) : new SKColor(140, 140, 140);
+				DrawText(canvas, label, Math.Max(10, TooltipFontSize - 1), col, buyXpRect.MidX, buyXpRect.MidY);
+			}
+
+			// Reroll button
+			{
+				bool hovered = mouseX >= rerollRect.Left && mouseX <= rerollRect.Right && mouseY >= rerollRect.Top && mouseY <= rerollRect.Bottom;
+				var bg = !canReroll ? new SKColor(60, 60, 60) : hovered ? new SKColor(130, 100, 50) : new SKColor(110, 85, 40);
+				using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = bg, IsAntialias = UseAntialiasing }) canvas.DrawRoundRect(rerollRect, 6, 6, p);
+				using (var p2 = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(140, 140, 140), StrokeWidth = 1, IsAntialias = UseAntialiasing }) canvas.DrawRoundRect(rerollRect, 6, 6, p2);
+				string label = $"Reroll ({rerollCost}g)";
+				var col = canReroll ? new SKColor(255, 255, 255) : new SKColor(140, 140, 140);
+				DrawText(canvas, label, Math.Max(10, TooltipFontSize - 1), col, rerollRect.MidX, rerollRect.MidY);
+			}
+		}
+
 		public void DrawSpawnButtons(SKCanvas canvas, System.Collections.Generic.List<(MicroAutoChess.Core.UnitType ut, int? cost)> specs, int? budget = null, int mouseX = 0, int mouseY = 0)
 		{
 			int total = specs?.Count ?? 0;
 			if (total == 0) return;
+
 			bool hoverDrawn = false;
 			for (int i = 0; i < total; i++)
 			{
 				var rect = GetSpawnButtonRect(i, total);
 				int w = (int)rect.Width; int h = (int)rect.Height;
-				bool disabled = false;
 				var (ut, cost) = specs[i];
-				if (budget.HasValue && cost.HasValue && cost.Value > budget.Value) disabled = true;
-				var bg = disabled ? new SKColor(100,100,100) : new SKColor(60,60,60);
+				bool empty = !cost.HasValue;
+				bool disabled = !empty && budget.HasValue && cost.Value > budget.Value;
+				var bg = empty ? new SKColor(45,45,45) : disabled ? new SKColor(100,100,100) : new SKColor(60,60,60);
 				using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = bg, IsAntialias = UseAntialiasing }) canvas.DrawRoundRect(rect, 6, 6, p);
 				using (var p2 = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(140,140,140), StrokeWidth = 1, IsAntialias = UseAntialiasing }) canvas.DrawRoundRect(rect, 6, 6, p2);
-				string label = ut.ToString();
-				if (cost.HasValue) label = $"{label} ({cost.Value})";
-				DrawText(canvas, label, TooltipFontSize, disabled ? new SKColor(180,180,180) : new SKColor(255,255,255), rect.MidX, rect.MidY);
+				if (!empty)
+				{
+					string label = $"{ut} ({cost.Value})";
+					DrawText(canvas, label, TooltipFontSize, disabled ? new SKColor(180,180,180) : new SKColor(255,255,255), rect.MidX, rect.MidY);
+				}
 
 				// hover tooltip: if mouse inside rect and not yet drawn
-				if (!hoverDrawn && mouseX >= rect.Left && mouseX <= rect.Right && mouseY >= rect.Top && mouseY <= rect.Bottom)
+				if (!empty && !hoverDrawn && mouseX >= rect.Left && mouseX <= rect.Right && mouseY >= rect.Top && mouseY <= rect.Bottom)
 				{
 					hoverDrawn = true;
 					// Build full tooltip (title + cost + spell description) by instantiating a temp Unit
@@ -1669,7 +1798,7 @@ namespace MicroAutoChess.AvaloniaApp
 			{
 				var corners = GetBenchCellCorners((cx, cy), CellRadius);
 				DrawPolygon(canvas, corners, color, 2);
-				if (unit != null)
+				if (unit != null && unit != _draggedUnit)
 				{
 					DrawUnitWithLevelBorder(cx, cy, unit, null, canvas);
 					var symbol = unit?.GetSymbol() ?? "?";
@@ -1677,18 +1806,25 @@ namespace MicroAutoChess.AvaloniaApp
 				}
 			}
 
+			// Determine which team is at top vs bottom
+			Team topTeam = ViewerTeam == Team.TEAM_1 ? Team.TEAM_2 : Team.TEAM_1;
+			Team bottomTeam = ViewerTeam;
+			int viewerBenchRow = -(int)ViewerTeam;
+
 			for (int i = 0; i < Math.Min(colCenters.Count, Board.BenchSize); i++)
 			{
-				int cx = colCenters[i];
-				Unit? unit = Board.Players[Team.TEAM_1].Bench.ContainsKey(i) ? Board.Players[Team.TEAM_1].Bench[i] : null;
+				int displayI = ViewerTeam == Team.TEAM_1 ? (Board.BenchSize - 1 - i) : i;
+				int cx = colCenters[displayI];
+				Unit? unit = Board.Players[topTeam].Bench.ContainsKey(i) ? Board.Players[topTeam].Bench[i] : null;
 				_draw_bench_cell(cx, top_bench_y, unit, GridColor);
 			}
 			for (int i = 0; i < Math.Min(colCenters.Count, Board.BenchSize); i++)
 			{
-				int cx = colCenters[i];
-				Unit? unit = Board.Players[Team.TEAM_2].Bench.ContainsKey(i) ? Board.Players[Team.TEAM_2].Bench[i] : null;
+				int displayI = ViewerTeam == Team.TEAM_1 ? (Board.BenchSize - 1 - i) : i;
+				int cx = colCenters[displayI];
+				Unit? unit = Board.Players[bottomTeam].Bench.ContainsKey(i) ? Board.Players[bottomTeam].Bench[i] : null;
 				SKColor color = GridColor;
-				if (HighlightHoveredCell.HasValue && HighlightHoveredCell.Value == (-2, i)) color = new SKColor(255,255,0);
+				if (HighlightHoveredCell.HasValue && HighlightHoveredCell.Value == (viewerBenchRow, i)) color = new SKColor(255,255,0);
 				else if (HighlightPlayerInitialZone) color = new SKColor(255,255,255);
 				_draw_bench_cell(cx, bottom_bench_y, unit, color);
 			}
@@ -1711,9 +1847,12 @@ namespace MicroAutoChess.AvaloniaApp
 			int col = benchIndex.Item2;
 			if (row != -1 && row != -2) return null;
 			if (col < 0 || col >= Board.BenchSize) return null;
-			int centerX = (int)(col * CellRadius * 1.5 + LeftOffset + Margin);
+			int displayCol = ViewerTeam == Team.TEAM_1 ? (Board.BenchSize - 1 - col) : col;
+			int centerX = (int)(displayCol * CellRadius * 1.5 + LeftOffset + Margin);
+			// When mirrored, swap which bench is top vs bottom
+			bool isTop = ViewerTeam == Team.TEAM_1 ? (row == -2) : (row == -1);
 			int centerY;
-			if (row == -1) centerY = Margin + CellRadius + 4;
+			if (isTop) centerY = Margin + CellRadius + 4;
 			else centerY = TopMargin + (int)(1.5 * CellRadius) + 4 + (int)(1.5 * CellRadius * Board.Height);
 			return (centerX, centerY);
 		}
@@ -1764,6 +1903,14 @@ namespace MicroAutoChess.AvaloniaApp
 			p.MeasureText(text, ref bounds);
 			// Draw at top-left (leftX, topY)
 			canvas.DrawText(text, leftX - bounds.Left, topY - bounds.Top, p);
+		}
+
+		private void DrawTextRight(SKCanvas canvas, string text, int fontSize, SKColor color, float rightX, float centerY)
+		{
+			using var p = new SKPaint { Color = color, IsAntialias = UseAntialiasing, TextSize = fontSize };
+			var bounds = new SKRect();
+			p.MeasureText(text, ref bounds);
+			canvas.DrawText(text, rightX - bounds.Width - bounds.Left, centerY - bounds.MidY, p);
 		}
 
 		private void DrawPolygon(SKCanvas canvas, IEnumerable<(int, int)> corners, SKColor color, int thickness)

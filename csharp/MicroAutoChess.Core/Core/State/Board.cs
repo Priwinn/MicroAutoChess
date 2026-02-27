@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 
 namespace MicroAutoChess.Core
@@ -75,8 +76,8 @@ namespace MicroAutoChess.Core
             Size = size ?? (7, 8);
             Width = Size.Item1;
             Height = Size.Item2;
-            Players[Team.TEAM_1] = new Player(1);
-            Players[Team.TEAM_2] = new Player(2);
+            Players[Team.TEAM_1] = new Player(1, Team.TEAM_1, new GameParams() { UnitLevelUp = false });
+            Players[Team.TEAM_2] = new Player(2, Team.TEAM_2);
             for (int x = 0; x < Width; x++)
             for (int y = 0; y < Height; y++)
                 Cells[(x, y)] = new BoardCell((x, y));
@@ -115,9 +116,11 @@ namespace MicroAutoChess.Core
             if (!Cells.ContainsKey(position)) return false;
             var cell = Cells[position];
             if (cell == null || !cell.IsEmpty()) return false;
+            if (!Players[unit.Team].AddUnitToBoard(unit, position))
+                return false;
             cell.PlaceUnit(unit);
-            Players[unit.Team].AddUnitToBoard(unit, position);
             InvalidateOccupiedCache();
+            if (Players[unit.Team].GameParams.UnitLevelUp) CheckUnitLevelUp(unit);
             return true;
         }
 
@@ -130,10 +133,11 @@ namespace MicroAutoChess.Core
             if (!Cells.ContainsKey(position)) return false;
             var cell = Cells[position];
             if (cell == null || !cell.IsEmpty()) return false;
+            if (!Players[unit.Team].AddUnitToBoard(unit, position))
+                return false;
             cell.PlaceUnit(unit);
-            Players[unit.Team].AddUnitToBoard(unit, position);
-
             InvalidateOccupiedCache();
+            if (Players[unit.Team].GameParams.UnitLevelUp) CheckUnitLevelUp(unit);
             return true;
         }
 
@@ -167,42 +171,77 @@ namespace MicroAutoChess.Core
 
         public Unit? RemoveBenchUnit(Team team, int benchIndex)
         {
-
-            var unit = Players[team].Bench.ContainsKey(benchIndex) ? Players[team].Bench[benchIndex] : null;
-            if (Players[team].Bench.ContainsKey(benchIndex)) Players[team].Bench[benchIndex] = null;
-            if (unit != null && unit.Position != null) { Players[team].UnitsOnBoard[unit.Position!.Value] = null; unit.Position = null; }
-            return unit;
+            if (Players[team].Bench.ContainsKey(benchIndex)) 
+            {
+                var unit = Players[team].Bench[benchIndex];
+                Players[team].Bench[benchIndex] = null;
+                return unit;
+            }
+            return null;
         }
 
         public bool AddBenchUnit(Team team, Unit unit, int benchIndex = -1)
         {
-            if (unit == null) return false;
-            int size = BenchSize;
-            if (benchIndex == -1)
+            bool added = Players[team].AddUnitToBench(unit, benchIndex);
+            if (added)
             {
-                for (int i = 0; i < size; i++){
-                    if (!Players[team].Bench.ContainsKey(i) || Players[team].Bench[i] == null) 
-                    {
-                        unit.Position = (-(int) team, i);
-                        Players[team].AddUnitToBench(unit);
-                        return true; 
-                    }
-                } 
+                if (Players[team].GameParams.UnitLevelUp) CheckUnitLevelUp(unit);
             }
-            else
+            return added;
+        }
+
+        public void CheckUnitLevelUp(Unit unit)
+        {
+            var team = unit.Team;
+            var sameUnitList = new List<Unit>();
+            foreach (var u in Players[team].Bench.Values) if (u != null && u.UnitType == unit.UnitType && u.Level == unit.Level)
             {
-                if (benchIndex >= 0 && benchIndex < size && (!Players[team].Bench.ContainsKey(benchIndex) || Players[team].Bench[benchIndex] == null))
+                sameUnitList.Add(u);
+            }
+             foreach (var u in Players[team].UnitsOnBoard.Values) if (u != null && u.UnitType == unit.UnitType && u.Level == unit.Level)
+            {
+                sameUnitList.Add(u);
+            }
+
+            if (sameUnitList.Count >= 3)
+            {
+                (int, int)? boardPos = null;
+                var leveled = sameUnitList[0].Clone();
+                leveled.LevelUp();
+                for (int i = 0; i < 3; i++)
                 {
-                    unit.Position = (-(int) team, benchIndex);
-                    Players[team].AddUnitToBench(unit);
-                    return true;
+                    var u = sameUnitList[i];
+                    if (u.Position.HasValue)
+                    {
+                        var pos = u.Position.Value;
+                        if (pos.Item1 >= 0)
+                        {
+                            if (!boardPos.HasValue) boardPos = pos;
+                            RemoveUnit(pos);
+                        }
+                        else
+                        {
+                            RemoveBenchUnit(team, pos.Item2);
+                        }
+                    }
+                    Players[team].RemoveUnit(u);
+                }
+                // Place leveled unit: prefer the board position if one was freed
+                if (boardPos.HasValue)
+                {
+                    leveled.Position = boardPos.Value;
+                    PlaceBoardUnit(leveled, boardPos.Value);
+                }
+                else
+                {
+                    AddBenchUnit(team, leveled);
                 }
             }
-            return false;
         }
 
         public bool PlayerMoveUnit((int, int) fromPos, (int, int) toPos, Team team)
         {
+            if (fromPos == toPos) return false;
             if ((fromPos.Item1 == -1 || toPos.Item1 == -1) && team != Team.TEAM_1) return false;
             if ((fromPos.Item1 == -2 || toPos.Item1 == -2) && team != Team.TEAM_2) return false;
             var validBoardPositions = GetInitialPositions(team);
@@ -214,8 +253,17 @@ namespace MicroAutoChess.Core
                 var benchUnit = RemoveBenchUnit(team, fromPos.Item2);
                 if (benchUnit == null) return false;
                 var toUnit = Cells[toPos].Unit;
-                if (toUnit != null && toUnit.Team == team) RemoveUnit(toPos);
-                if (!PlaceBoardUnit(benchUnit, toPos)) return false;
+                if (toUnit != null && toUnit.Team == team)
+                {
+                    RemoveUnit(toPos);
+                }
+                if (!PlaceBoardUnit(benchUnit, toPos))
+                {
+                    // Restore bench unit if placement failed (e.g. max units on board)
+                    AddBenchUnit(team, benchUnit, benchIndex: fromPos.Item2);
+                    if (toUnit != null && toUnit.Team == team) PlaceBoardUnit(toUnit, toPos);
+                    return false;
+                }
                 if (toUnit != null && toUnit.Team == team) AddBenchUnit(team, toUnit, benchIndex: fromPos.Item2);
                 return true;
             }
@@ -242,16 +290,39 @@ namespace MicroAutoChess.Core
                 if (toUnit != null && toUnit.Team != team) return false;
                 if (toUnit != null && toUnit.Team == team)
                 {
+                    // Swap: update cells
                     var removedTo = toCell.RemoveUnit();
                     var removedFrom = fromCell.RemoveUnit();
                     toCell.PlaceUnit(removedFrom);
                     fromCell.PlaceUnit(removedTo);
+                    // Update player tracking
+                    var player = Players[team];
+                    player.UnitsOnBoard.Remove(fromPos);
+                    player.UnitsOnBoard.Remove(toPos);
+                    removedFrom.Position = toPos;
+                    removedTo.Position = fromPos;
+                    player.UnitsOnBoard[toPos] = removedFrom;
+                    player.UnitsOnBoard[fromPos] = removedTo;
                     InvalidateOccupiedCache();
                     return true;
                 }
                 else
                 {
-                    return MoveUnit(fromPos, toPos);
+                    // Move to empty cell: update player tracking
+                    var player = Players[team];
+                    player.UnitsOnBoard.Remove(fromPos);
+                    bool moved = MoveUnit(fromPos, toPos);
+                    if (moved)
+                    {
+                        fromUnit.Position = toPos;
+                        player.UnitsOnBoard[toPos] = fromUnit;
+                    }
+                    else
+                    {
+                        // Restore tracking if cell move failed
+                        player.UnitsOnBoard[fromPos] = fromUnit;
+                    }
+                    return moved;
                 }
             }
 
@@ -458,8 +529,30 @@ namespace MicroAutoChess.Core
         public Unit RemoveUnit((int, int) position)
         {
             var cell = Cells[position];
-            if (cell != null && !cell.IsEmpty()) { var u = cell.RemoveUnit(); InvalidateOccupiedCache(); return u; }
+            if (cell != null && !cell.IsEmpty()) { 
+                var u = cell.RemoveUnit();
+                Players[u.Team].RemoveUnit(u);
+                InvalidateOccupiedCache();
+                return u;
+            }
             throw new ArgumentException($"Tried to remove unit from empty cell {position}");
+        }
+
+        /// <summary>
+        /// Removes a unit from its board cell only, without updating the player's unit dictionaries.
+        /// Used during combat so that player's persistent unit roster is preserved for round recovery.
+        /// </summary>
+        public Unit? RemoveUnitFromCell((int, int) position)
+        {
+            if (!Cells.ContainsKey(position)) return null;
+            var cell = Cells[position];
+            if (cell != null && !cell.IsEmpty())
+            {
+                var u = cell.RemoveUnit();
+                InvalidateOccupiedCache();
+                return u;
+            }
+            return null;
         }
 
         public void SetPlanned((int, int) position, Unit unit)

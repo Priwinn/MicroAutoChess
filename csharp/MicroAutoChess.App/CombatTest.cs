@@ -64,8 +64,8 @@ namespace MicroAutoChess.App
         internal static (Board, Player, Player) CreateMockScenario()
         {
             var board = new HexBoard((7, 8));
-            var player1 = new Player(1);
-            var player2 = new Player(2);
+            var player1 = new Player(1, Team.TEAM_1);
+            var player2 = new Player(2, Team.TEAM_2);
 
             // Team 1: LEVELTANKSTEST -> all tanks in columns 0..6, rows 0..3
             for (int x = 0; x < 7; x++)
@@ -73,7 +73,7 @@ namespace MicroAutoChess.App
                 for (int y = 0; y < 4; y++)
                 {
                     var pos = (x, y);
-                    var u = new Unit(UnitType.TANK, UnitRarity.COMMON, 1) { Position = pos };
+                    var u = new Unit(UnitType.TANK, UnitRarity.COMMON, Team.TEAM_1) { Position = pos };
                     u.CurrentHealth = u.GetMaxHealth();
                     board.PlaceBoardUnit(u, pos);
                     player1.UnitsOnBoard[pos] = u;
@@ -98,7 +98,7 @@ namespace MicroAutoChess.App
             {
                 var pos = kv.Key;
                 var ut = kv.Value;
-                var u = new Unit(ut, UnitRarity.COMMON, 2) { Position = pos };
+                var u = new Unit(ut, UnitRarity.COMMON, Team.TEAM_2) { Position = pos };
                 u.CurrentHealth = u.GetMaxHealth();
                 board.PlaceBoardUnit(u, pos);
                 player2.UnitsOnBoard[pos] = u;

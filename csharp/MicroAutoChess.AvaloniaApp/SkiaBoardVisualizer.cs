@@ -1,11 +1,25 @@
 using SkiaSharp;
 using MicroAutoChess.Core;
 using MicroAutoChess.Core.Spells;
+using MicroAutoChess.Core.Traits;
 using System.Collections.Generic;
 using System;
 
 namespace MicroAutoChess.AvaloniaApp
 {
+	/// <summary>Data for a single player entry in the player list panel.</summary>
+	public class PlayerListEntry
+	{
+		public int PlayerId { get; set; }
+		public int Health { get; set; }
+		public int MaxHealth { get; set; }
+		public int Level { get; set; }
+		public bool IsAlive { get; set; }
+		public bool IsMe { get; set; }
+		/// <summary>Combat outcome this round: 1=won, 2=lost, 0=draw, null=ongoing/no combat.</summary>
+		public int? CombatOutcome { get; set; }
+	}
+
 	// Skeleton Skia-based visualizer: copies layout/state and provides placeholder helpers
 	public class SkiaBoardVisualizer
 	{
@@ -58,6 +72,7 @@ namespace MicroAutoChess.AvaloniaApp
 		public List<object> AoEAnimations { get; } = new List<object>();
 		public List<object> Particles { get; } = new List<object>();
 		public List<object> DeathAnimations { get; } = new List<object>();
+		public List<object> ChainAnimations { get; } = new List<object>();
 		public List<object> FloatingTexts { get; } = new List<object>();
 		// Deferred tooltip surfaces to draw last (spawn tooltips etc.)
 		private List<(SKBitmap bmp, int x, int y)> _deferredTooltips = new List<(SKBitmap, int, int)>();
@@ -68,7 +83,13 @@ namespace MicroAutoChess.AvaloniaApp
 
 		// Runtime state containers
 		public Dictionary<int, double> DamageDone { get; } = new Dictionary<int, double>();
+		public Dictionary<int, double> DamageTaken { get; } = new Dictionary<int, double>();
+		public Dictionary<int, double> DamageMitigated { get; } = new Dictionary<int, double>();
 		public Dictionary<int, (string symbol, Team team)> UnitInfo { get; } = new Dictionary<int, (string, Team)>();
+
+		// Damage meter tab state: 0 = Damage Done, 1 = Damage Taken, 2 = Damage Mitigated
+		public int ActiveMeterTab { get; set; } = 0;
+		private static readonly string[] MeterTabLabels = { "Done", "Taken", "Mitigated" };
 
 		// Performance flags
 		public bool UseAntialiasing { get; set; } = false;
@@ -102,18 +123,18 @@ namespace MicroAutoChess.AvaloniaApp
 			CellRadius = Math.Max(10, (int)(origCell * scale));
 			BenchGap = CellRadius * 2;
 			TopMargin = margin + BenchGap;
-			FontSize = Math.Max(12, (int)(cellRadius * 0.6));
-			TooltipFontSize = Math.Max(9, (int)(CellRadius * 0.45));
-			DamageFontSize = Math.Max(14, (int)(CellRadius * 0.6));
-			TitleFontSize = Math.Max(18, (int)(CellRadius * 0.9));
+			FontSize = (int)(CellRadius * 0.6);
+			TooltipFontSize = (int)(CellRadius * 0.45);
+			DamageFontSize = (int)(CellRadius * 0.6);
+			TitleFontSize =  (int)(CellRadius * 0.9);
 
-			RightPanelWidth = Math.Max(480, (int)(CellRadius * 8));
-			BottomPanelHeight = Math.Max(60, (int)(CellRadius * 1.0));
+			RightPanelWidth = (int)(CellRadius * 8);
+			BottomPanelHeight = (int)(CellRadius * 1.0);
 
 			WindowWidth = desiredW;
 			WindowHeight = desiredH;
 
-			LeftOffset = (int)(WindowWidth * 0.06) + (int)(WindowWidth * 0.04);
+			LeftOffset = (int)(WindowWidth * 0.1);
 
 			if (leftOffset.HasValue) LeftOffset = leftOffset.Value;
 			if (topMargin.HasValue) TopMargin = topMargin.Value;
@@ -194,6 +215,33 @@ namespace MicroAutoChess.AvaloniaApp
 			float shopTop = r0.Top;
 			float shopBottom = r0.Bottom + (r0.Height * 0.5f);
 			return mouseX >= shopLeft && mouseX <= shopRight && mouseY >= shopTop && mouseY <= shopBottom;
+		}
+
+		/// <summary>
+		/// Hit-test the damage meter tab bar. Returns the tab index (0-2) if clicked, or -1.
+		/// </summary>
+		public int HitTestMeterTab(int mouseX, int mouseY)
+		{
+			int tabFontSize = Math.Max(10, DamageFontSize);
+			int tabPadX = 10;
+			int tabPadY = 4;
+			int tabGap = 4;
+			int playerEntryW = Math.Max(160, (int)(CellRadius * 5));
+			int chartX = WindowWidth - playerEntryW - Margin - RightPanelWidth - 8;
+			int tabY = Margin + 4;
+			int tabX = chartX + 8;
+			int tabH = tabFontSize + tabPadY * 2;
+
+			using var measPaint = new SKPaint { TextSize = tabFontSize, IsAntialias = UseAntialiasing };
+			for (int t = 0; t < MeterTabLabels.Length; t++)
+			{
+				float tw = measPaint.MeasureText(MeterTabLabels[t]);
+				int tabW = (int)tw + tabPadX * 2;
+				if (mouseX >= tabX && mouseX <= tabX + tabW && mouseY >= tabY && mouseY <= tabY + tabH)
+					return t;
+				tabX += tabW + tabGap;
+			}
+			return -1;
 		}
 
 		public bool BeginDragAt(int mouseX, int mouseY)
@@ -296,7 +344,7 @@ namespace MicroAutoChess.AvaloniaApp
 		}
 
 		// Primary draw entry used by the Avalonia host (placeholder)
-		public void Draw(SKCanvas canvas, int width, int height, CombatEngine? engine, int simFrame, float simProgress, bool paused = false, int mouseX = 0, int mouseY = 0, System.Collections.Generic.List<(MicroAutoChess.Core.UnitType ut, int? cost)>? spawnSpecs = null, int? spawnBudget = null, double engineFps = 10.0, Player? player = null, GameParams? gameParams = null)
+		public void Draw(SKCanvas canvas, int width, int height, CombatEngine? engine, int simFrame, float simProgress, bool paused = false, int mouseX = 0, int mouseY = 0, System.Collections.Generic.List<(MicroAutoChess.Core.UnitType ut, int? cost)>? spawnSpecs = null, int? spawnBudget = null, double engineFps = 10.0, Player? player = null, GameParams? gameParams = null, List<PlayerListEntry>? playerList = null, int? inspectedPlayerId = null, Player? viewedPlayer = null)
 		{
 			// Clear background
 			canvas.Clear(BgColor);
@@ -316,6 +364,7 @@ namespace MicroAutoChess.AvaloniaApp
 			DrawMovingUnits(movingMap, now, canvas);
 			DrawAttackAndProjectiles(engine, attackAnims, spellProjectiles, canvas);
 			DrawAoEAnimations(now, canvas);
+			DrawChainAnimations(now, canvas);
 			DrawParticles(now, canvas);
 			DrawDeathAnimations(now, canvas);
 			DrawDamageCharts(engine, canvas);
@@ -324,6 +373,8 @@ namespace MicroAutoChess.AvaloniaApp
 			DrawPauseButton(canvas, paused);
 			DrawSpawnButtons(canvas, spawnSpecs, spawnBudget, mouseX, mouseY);
 			DrawShopPanel(canvas, spawnSpecs?.Count ?? 5, spawnBudget, player, gameParams, mouseX, mouseY);
+			DrawPlayerListPanel(canvas, playerList, inspectedPlayerId, mouseX, mouseY);
+			DrawTraitPanel(canvas, engine, viewedPlayer ?? player, mouseX, mouseY);
 			DrawHoverTooltip(canvas, mouseX, mouseY);
 			if (_draggedUnit != null)
 			{
@@ -446,10 +497,13 @@ namespace MicroAutoChess.AvaloniaApp
 			if (ev == null) return;
 			int id = GetEventId(ev);
 			if (_seenEvents.Contains(id)) return;
-			// Get spell instance by name (CombatEvent carries SpellName)
-			AbstractSpell? spellInst = null;
-			string? spellName = ev.SpellName;
-			if (!string.IsNullOrEmpty(spellName)) spellInst = SpellsFactory.GetSpellInstanceByName(spellName);
+			// Use the actual spell instance from the event (preserves execution state like chain positions)
+			AbstractSpell? spellInst = ev.SpellInstance;
+			if (spellInst == null)
+			{
+				string? spellName = ev.SpellName;
+				if (!string.IsNullOrEmpty(spellName)) spellInst = SpellsFactory.GetSpellInstanceByName(spellName);
+			}
 			if (spellInst == null) return;
 
 			// call on-hit render callback if provided by the spell
@@ -532,6 +586,37 @@ namespace MicroAutoChess.AvaloniaApp
 				}
 				_seenEvents.Add(id);
 			}
+			else if (dtype == "chain")
+			{
+				object? chainObj = null;
+				desc.TryGetValue("chain_positions", out chainObj);
+				if (chainObj is List<(int, int)> chainPositions && chainPositions.Count >= 2)
+				{
+					double duration = 0.6;
+					if (desc.TryGetValue("duration", out var durObj) && durObj != null)
+						duration = Convert.ToDouble(durObj);
+
+					// Convert board positions to pixel coordinates
+					var pixelPoints = new List<(int, int)>();
+					foreach (var bp in chainPositions)
+					{
+						var pix = CellPixel(bp);
+						pixelPoints.Add((pix.Item1 + LeftOffset + Margin, pix.Item2 + TopMargin + CellRadius + 4));
+					}
+
+					int[] color = new int[] { 100, 180, 255 };
+					if (desc.TryGetValue("color_hint", out var colorHint))
+					{
+						if (colorHint is Tuple<int, int, int> ct)
+							color = new int[] { ct.Item1, ct.Item2, ct.Item3 };
+						else if (colorHint is int[] ca && ca.Length >= 3)
+							color = ca;
+					}
+
+					ChainAnimations.Add(new object[] { pixelPoints, now, duration, color });
+				}
+				_seenEvents.Add(id);
+			}
 
 		}
 		private void HandleDamageEvent(CombatEvent ev, double now)
@@ -553,8 +638,20 @@ namespace MicroAutoChess.AvaloniaApp
 				UnitInfo[sid] = (sym, team);
 			}
 
-			var pos = ev.Position;
 			var target = ev.Target;
+			if (target != null)
+			{
+				int tid = target.Id;
+				if (!DamageTaken.ContainsKey(tid)) DamageTaken[tid] = 0.0;
+				DamageTaken[tid] += dmg;
+				if (!DamageMitigated.ContainsKey(tid)) DamageMitigated[tid] = 0.0;
+				DamageMitigated[tid] += ev.DamageMitigated;
+				string sym = target.GetSymbol() ?? "?";
+				Team team = target.Team;
+				UnitInfo[tid] = (sym, team);
+			}
+
+			var pos = ev.Position;
 			if (!pos.HasValue && target != null) pos = target.Position;
 			if (!pos.HasValue) return;
 
@@ -580,7 +677,9 @@ namespace MicroAutoChess.AvaloniaApp
 			double speed = CellRadius * (_rand.NextDouble() * 0.4 + 1.2);
 			double vx = Math.Cos(theta) * speed;
 			double vy = Math.Sin(theta) * speed;
-			var txtColorObj = (ev.EventType == CombatEventType.HEALING_DONE) ? new int[] { 50, 200, 100 } : new int[] { 255, 140, 0 };
+			var txtColorObj = (ev.EventType == CombatEventType.HEALING_DONE) ? new int[] { 50, 200, 100 }
+				: ev.IsDot ? new int[] { 120, 200, 50 }
+				: new int[] { 255, 140, 0 };
 			FloatingTexts.Add(new object[] { cx, cy - (int)(CellRadius * 0.8), txt, now, duration, vx, vy, txtColorObj });
 			_seenEvents.Add(id);
 		}
@@ -769,20 +868,8 @@ namespace MicroAutoChess.AvaloniaApp
 						else
 							DrawText(canvas, symbol, FontSize, new SKColor(255,255,255), centerX, centerY);
 
-						// health/mana bars
-						int barW = (int)(CellRadius * 1.2);
-						int barH = Math.Max(3, (int)(CellRadius * 0.12));
-						int hbX = centerX - barW / 2;
-						int hbY = centerY - (int)(CellRadius * 0.75);
-						DrawRect(canvas, hbX, hbY, barW, barH, new SKColor(50,50,50));
-						double hpRatio = Math.Max(0.0, Math.Min(1.0, unit.CurrentHealth / unit.GetMaxHealth()));
-						DrawRect(canvas, hbX, hbY, (int)(barW * hpRatio), barH, new SKColor(50,200,100));
-
-						int mbY = centerY - (int)(CellRadius * 0.63);
-						DrawRect(canvas, hbX, mbY, barW, barH, new SKColor(50,50,50));
-						double maxMana = unit.BaseStats?.MaxMana ?? 1.0;
-						double manaRatio = Math.Max(0.0, Math.Min(1.0, unit.CurrentMana / maxMana));
-						DrawRect(canvas, hbX, mbY, (int)(barW * manaRatio), barH, new SKColor(80,140,220));
+						// health/mana bars + status indicators
+						DrawUnitBarsAndIndicators(canvas, unit, centerX, centerY, now);
 					}
 				}
 			}
@@ -830,20 +917,8 @@ namespace MicroAutoChess.AvaloniaApp
 				else
 					DrawText(canvas, symbol, FontSize, new SKColor(255,255,255), ix, iy);
 
-				// health / mana bars drawn above the moving unit
-				int barW = (int)(CellRadius * 1.2);
-				int barH = Math.Max(3, (int)(CellRadius * 0.12));
-				int hbX = ix - barW / 2;
-				int hbY = iy - (int)(CellRadius * 0.75);
-				DrawRect(canvas, hbX, hbY, barW, barH, new SKColor(50,50,50));
-				double hpRatio = Math.Max(0.0, Math.Min(1.0, unit.CurrentHealth / unit.GetMaxHealth()));
-				DrawRect(canvas, hbX, hbY, (int)(barW * hpRatio), barH, new SKColor(50,200,100));
-
-				int mbY = iy - (int)(CellRadius * 0.63);
-				DrawRect(canvas, hbX, mbY, barW, barH, new SKColor(50,50,50));
-				double maxMana = unit.BaseStats?.MaxMana ?? 1.0;
-				double manaRatio = Math.Max(0.0, Math.Min(1.0, unit.CurrentMana / maxMana));
-				DrawRect(canvas, hbX, mbY, (int)(barW * manaRatio), barH, new SKColor(80,140,220));
+				// health / mana bars + status indicators drawn above the moving unit
+				DrawUnitBarsAndIndicators(canvas, unit, ix, iy, now);
 			}
 		}
 		private void DrawAttackAndProjectiles(CombatEngine? engine, List<object> attackAnims, List<object> spellProjectiles, SKCanvas canvas)
@@ -1014,6 +1089,89 @@ namespace MicroAutoChess.AvaloniaApp
 			AoEAnimations.Clear();
 			foreach (var r in remaining) AoEAnimations.Add(r);
 		}
+		private void DrawChainAnimations(DateTime now, SKCanvas canvas)
+		{
+			var remaining = new List<object>();
+
+			foreach (var item in ChainAnimations)
+			{
+				if (item is not object[] arr || arr.Length < 3) continue;
+				var points = arr[0] as List<(int, int)>;
+				if (points == null || points.Count < 2) continue;
+
+				double startSec = 0;
+				if (arr[1] is DateTime sdt) startSec = sdt.Subtract(DateTime.UnixEpoch).TotalSeconds;
+				else if (arr[1] is double sd) startSec = sd;
+
+				double duration = 0.6;
+				if (arr[2] is double dd) duration = dd;
+
+				int[] color = new int[] { 100, 180, 255 };
+				if (arr[3] is int[] ca) color = ca;
+
+				double nowSec = now.Subtract(DateTime.UnixEpoch).TotalSeconds;
+				double elapsed = nowSec - startSec;
+
+				if (elapsed <= duration)
+				{
+					double progress = elapsed / duration;
+					byte alpha = (byte)Math.Max(0, Math.Min(255, (int)(255 * (1.0 - progress))));
+
+					// Draw chain segments one by one with staggered reveal
+					int segmentCount = points.Count - 1;
+					double revealPerSegment = 0.6 / segmentCount; // segments reveal over first 60% of duration
+
+					for (int i = 0; i < segmentCount; i++)
+					{
+						double segStart = i * revealPerSegment;
+						if (elapsed < segStart) break;
+
+						var (x1, y1) = points[i];
+						var (x2, y2) = points[i + 1];
+
+						// Segment alpha fades based on its own age
+						double segAge = elapsed - segStart;
+						double segAlpha = Math.Max(0, 1.0 - segAge / (duration - segStart));
+						byte sa = (byte)Math.Max(0, Math.Min(255, (int)(255 * segAlpha)));
+
+						// Main bolt line (thick, colored)
+						using var mainPaint = new SKPaint
+						{
+							Style = SKPaintStyle.Stroke,
+							Color = new SKColor((byte)color[0], (byte)color[1], (byte)color[2], sa),
+							StrokeWidth = 3f,
+							IsAntialias = UseAntialiasing
+						};
+						canvas.DrawLine(x1, y1, x2, y2, mainPaint);
+
+						// Glow line (wider, semi-transparent white)
+						byte glowAlpha = (byte)Math.Max(0, sa / 2);
+						using var glowPaint = new SKPaint
+						{
+							Style = SKPaintStyle.Stroke,
+							Color = new SKColor(255, 255, 255, glowAlpha),
+							StrokeWidth = 6f,
+							IsAntialias = UseAntialiasing
+						};
+						canvas.DrawLine(x1, y1, x2, y2, glowPaint);
+
+						// Small circle at each hit point
+						using var dotPaint = new SKPaint
+						{
+							Style = SKPaintStyle.Fill,
+							Color = new SKColor(255, 255, 255, sa),
+							IsAntialias = UseAntialiasing
+						};
+						canvas.DrawCircle(x2, y2, 4, dotPaint);
+					}
+
+					remaining.Add(item);
+				}
+			}
+
+			ChainAnimations.Clear();
+			foreach (var r in remaining) ChainAnimations.Add(r);
+		}
 		private void DrawParticles(DateTime now, SKCanvas canvas)
 		{
 			var remaining = new List<object>();
@@ -1141,29 +1299,77 @@ namespace MicroAutoChess.AvaloniaApp
 		}
 		private void DrawDamageCharts(CombatEngine? engine, SKCanvas canvas)
 		{
-			if (engine == null || DamageDone == null || DamageDone.Count == 0) return;
+			// Pick the data source based on active tab
+			Dictionary<int, double> activeData;
+			switch (ActiveMeterTab)
+			{
+				case 1: activeData = DamageTaken; break;
+				case 2: activeData = DamageMitigated; break;
+				default: activeData = DamageDone; break;
+			}
+			if (engine == null || activeData == null || activeData.Count == 0)
+			{
+				// Still draw the panel + tabs even when empty
+				if (engine == null) return;
+			}
 
 			int spacing = 12;
 			int totalW = RightPanelWidth;
 			int eachW = Math.Max(180, (totalW - spacing) / 2);
-			int chartX = WindowWidth - totalW - Margin;
+			// Position to the left of the player list panel
+			int playerEntryW = Math.Max(160, (int)(CellRadius * 5));
+			int chartX = WindowWidth - playerEntryW - Margin - totalW - 8;
 			int chartY = Margin;
 			int chartH = WindowHeight - 2 * Margin;
 
 			// background panel
 			DrawRect(canvas, chartX, chartY, totalW, chartH, new SKColor(40, 40, 40));
 
-			// title (left aligned similar to WinForms visualizer)
-			DrawTextLeft(canvas, "Damage Meter", Math.Max(12, TitleFontSize), new SKColor(230,230,230), chartX + 12, chartY + 6 + TitleFontSize/2);
+			// Draw tabs
+			int tabFontSize = Math.Max(10, DamageFontSize);
+			int tabPadX = 10;
+			int tabPadY = 4;
+			int tabGap = 4;
+			int tabY = chartY + 4;
+			int tabX = chartX + 8;
+			for (int t = 0; t < MeterTabLabels.Length; t++)
+			{
+				using var measPaint = new SKPaint { TextSize = tabFontSize, IsAntialias = UseAntialiasing };
+				float tw = measPaint.MeasureText(MeterTabLabels[t]);
+				int tabW = (int)tw + tabPadX * 2;
+				int tabH = tabFontSize + tabPadY * 2;
 
-			// bucket units by team using persistent UnitInfo so dead units remain visible
+				bool active = (t == ActiveMeterTab);
+				var bgColor = active ? new SKColor(70, 70, 70) : new SKColor(50, 50, 50);
+				var txtColor = active ? new SKColor(255, 255, 255) : new SKColor(160, 160, 160);
+
+				DrawRect(canvas, tabX, tabY, tabW, tabH, bgColor);
+				if (active)
+				{
+					// underline
+					DrawRect(canvas, tabX, tabY + tabH - 2, tabW, 2, new SKColor(100, 180, 255));
+				}
+				DrawTextLeft(canvas, MeterTabLabels[t], tabFontSize, txtColor, tabX + tabPadX, tabY + tabPadY);
+
+				tabX += tabW + tabGap;
+			}
+
+			int tabBarH = tabFontSize + tabPadY * 2 + 8;
+
+			if (activeData == null || activeData.Count == 0)
+			{
+				DrawText(canvas, "No data", DamageFontSize, new SKColor(160,160,160), chartX + totalW / 2, chartY + tabBarH + DamageFontSize + 20);
+				return;
+			}
+
+			// bucket units by team
 			var unitsByTeam = new Dictionary<Team, List<(string symbol, Team team, double dmg)>>()
 			{
 				{Team.TEAM_1, new List<(string symbol, Team team, double dmg)>()},
 				{Team.TEAM_2, new List<(string symbol, Team team, double dmg)>()}
 			};
 
-			foreach (var kv in DamageDone)
+			foreach (var kv in activeData)
 			{
 				int uid = kv.Key;
 				double dmg = kv.Value;
@@ -1175,7 +1381,7 @@ namespace MicroAutoChess.AvaloniaApp
 			}
 
 			int padLeft = 8;
-			int padTop = TitleFontSize;
+			int padTop = tabBarH;
 			int maxShow = 8;
 
 			foreach (Team team in new Team[] { Team.TEAM_1, Team.TEAM_2 })
@@ -1192,7 +1398,7 @@ namespace MicroAutoChess.AvaloniaApp
 
 				if (entries.Count == 0)
 				{
-					DrawText(canvas, "No damage", DamageFontSize, new SKColor(160,160,160), regionX + 6 + regionW/2, titleY + DamageFontSize);
+					DrawText(canvas, "No data", DamageFontSize, new SKColor(160,160,160), regionX + 6 + regionW/2, titleY + DamageFontSize);
 					continue;
 				}
 
@@ -1504,8 +1710,8 @@ namespace MicroAutoChess.AvaloniaApp
 		// UI button helpers (pause/start and spawn row)
 		public SKRect GetPauseButtonRect()
 		{
-			int btnW = Math.Max(80, (int)(CellRadius * 2.5));
-			int btnH = Math.Max(44, (int)(CellRadius * 1.5));
+			int btnW = (int)(CellRadius * 2.5);
+			int btnH = (int)(CellRadius * 2.0);
 			int bx = WindowWidth - btnW - Margin;
 			int by = WindowHeight - btnH - Margin;
 			return new SKRect(bx, by, bx + btnW, by + btnH);
@@ -1575,7 +1781,7 @@ namespace MicroAutoChess.AvaloniaApp
 		public SKRect GetSpawnButtonRect(int index, int total = 4)
 		{
 			int btnW = (int)(CellRadius * 2.5);
-			int btnH = (int)(CellRadius * 1.5);
+			int btnH = (int)(CellRadius * 2.0);
 			var pause = GetPauseButtonRect();
 			int spacing = 8;
 			int totalW = total * btnW + (total - 1) * spacing;
@@ -1680,6 +1886,18 @@ namespace MicroAutoChess.AvaloniaApp
 			}
 		}
 
+		private static string GetUnitDisplayName(UnitType ut)
+		{
+			// "LIGHTNING_MAGE" → "Lightning Mage",  "WARRIOR" → "Warrior"
+			var words = ut.ToString().Split('_');
+			for (int i = 0; i < words.Length; i++)
+			{
+				var w = words[i];
+				words[i] = w.Length == 0 ? w : char.ToUpper(w[0]) + w.Substring(1).ToLower();
+			}
+			return string.Join(" ", words);
+		}
+
 		public void DrawSpawnButtons(SKCanvas canvas, System.Collections.Generic.List<(MicroAutoChess.Core.UnitType ut, int? cost)> specs, int? budget = null, int mouseX = 0, int mouseY = 0)
 		{
 			int total = specs?.Count ?? 0;
@@ -1698,8 +1916,31 @@ namespace MicroAutoChess.AvaloniaApp
 				using (var p2 = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(140,140,140), StrokeWidth = 1, IsAntialias = UseAntialiasing }) canvas.DrawRoundRect(rect, 6, 6, p2);
 				if (!empty)
 				{
-					string label = $"{ut} ({cost.Value})";
-					DrawText(canvas, label, TooltipFontSize, disabled ? new SKColor(180,180,180) : new SKColor(255,255,255), rect.MidX, rect.MidY);
+					int nameFontSize = TooltipFontSize -1;
+					int costFontSize = TooltipFontSize - 2;
+					int traitFontSize = TooltipFontSize - 3;
+					var txtColor = disabled ? new SKColor(180,180,180) : new SKColor(255,255,255);
+					var costColor = disabled ? new SKColor(150,150,100) : new SKColor(255,215,0);
+					var traitColor = disabled ? new SKColor(130,130,130) : new SKColor(180,200,220);
+
+					// Build ordered line list: name, cost, one line per trait
+					var lines = new List<(string text, SKColor color, int fs)>();
+					lines.Add((GetUnitDisplayName(ut), txtColor, nameFontSize));
+					lines.Add(($"{cost.Value}g", costColor, costFontSize));
+					var traits = Unit.GetTraits(ut);
+					foreach (var t in traits)
+						if (TraitRegistry.Definitions.TryGetValue(t, out var tdef))
+							lines.Add((tdef.Name, traitColor, traitFontSize));
+
+					// Vertically center the stack of lines inside the button
+					int lineH = (int)(nameFontSize * 1.3f);
+					float totalTextH = lines.Count * lineH;
+					float lineY = rect.MidY - totalTextH / 2f + lineH / 2f;
+					foreach (var (text, color, fs) in lines)
+					{
+						DrawText(canvas, text, fs, color, rect.MidX, lineY);
+						lineY += lineH;
+					}
 				}
 
 				// hover tooltip: if mouse inside rect and not yet drawn
@@ -1707,7 +1948,7 @@ namespace MicroAutoChess.AvaloniaApp
 				{
 					hoverDrawn = true;
 					// Build full tooltip (title + cost + spell description) by instantiating a temp Unit
-					string title = ut.ToString();
+					string title = GetUnitDisplayName(ut);
 					string costText = cost.HasValue ? $"Cost: {cost.Value}" : "";
 					// instantiate temp unit to access base stats / spell description
 					string desc = "No spell.";
@@ -1878,6 +2119,424 @@ namespace MicroAutoChess.AvaloniaApp
 				case 2: return new SKColor(192,192,192);
 				case 3: return new SKColor(212,175,55);
 				default: return new SKColor(170,220,255);
+			}
+		}
+
+		/// <summary>Draw health bar (with shield), mana bar, and status effect indicators for a unit.</summary>
+		private void DrawUnitBarsAndIndicators(SKCanvas canvas, Unit unit, int centerX, int centerY, DateTime now)
+		{
+			int barW = (int)(CellRadius * 1.2);
+			int barH = Math.Max(3, (int)(CellRadius * 0.12));
+			int hbX = centerX - barW / 2;
+			int hbY = centerY - (int)(CellRadius * 0.75);
+
+			double maxHealth = unit.GetMaxHealth();
+			double currentHealth = unit.CurrentHealth;
+
+			// Compute total shield from active status effects
+			double totalShield = 0;
+			bool hasDot = false;
+			bool isStunned = false;
+			foreach (var eff in unit.ActiveStatusEffects)
+			{
+				if (eff.EffectType == StatusEffectType.SHIELD && eff.ShieldAmount > 0)
+					totalShield += eff.ShieldAmount;
+				if (eff.EffectType == StatusEffectType.DOT && !eff.IsExpired)
+					hasDot = true;
+				if (eff.EffectType == StatusEffectType.STUN && !eff.IsExpired)
+					isStunned = true;
+			}
+
+			// Reference value: max(maxHealth, currentHealth + totalShield)
+			double refValue = Math.Max(maxHealth, currentHealth + totalShield);
+			if (refValue <= 0) refValue = 1;
+
+			// Bar background
+			DrawRect(canvas, hbX, hbY, barW, barH, new SKColor(50, 50, 50));
+
+			// Health fill (green)
+			double hpFrac = Math.Max(0.0, Math.Min(1.0, currentHealth / refValue));
+			int hpW = (int)(barW * hpFrac);
+			if (hpW > 0)
+				DrawRect(canvas, hbX, hbY, hpW, barH, new SKColor(50, 200, 100));
+
+			// Shield fill (white) drawn immediately after health
+			if (totalShield > 0)
+			{
+				double shieldFrac = Math.Max(0.0, Math.Min(1.0, totalShield / refValue));
+				int shieldW = (int)(barW * shieldFrac);
+				if (shieldW > 0)
+					DrawRect(canvas, hbX + hpW, hbY, shieldW, barH, new SKColor(220, 220, 255));
+			}
+
+			// Mana bar
+			int mbY = centerY - (int)(CellRadius * 0.63);
+			DrawRect(canvas, hbX, mbY, barW, barH, new SKColor(50, 50, 50));
+			double maxMana = unit.BaseStats?.MaxMana ?? 1.0;
+			double manaRatio = Math.Max(0.0, Math.Min(1.0, unit.CurrentMana / maxMana));
+			DrawRect(canvas, hbX, mbY, (int)(barW * manaRatio), barH, new SKColor(80, 140, 220));
+
+			// --- Status effect indicators ---
+			int unitR = (int)(CellRadius * 0.45);
+
+			// DoT indicator: pulsing green ring around unit
+			if (hasDot)
+			{
+				double pulse = now.Subtract(DateTime.UnixEpoch).TotalSeconds;
+				byte alpha = (byte)(140 + (int)(60 * Math.Sin(pulse * 4.0)));
+				int thickness = Math.Max(2, (int)(CellRadius * 0.06));
+				DrawCircleBorder(canvas, centerX, centerY, unitR + thickness, thickness, new SKColor(100, 220, 50, alpha));
+			}
+
+			// Stun indicator: yellow spiral/stars above the unit
+			if (isStunned)
+			{
+				double t = now.Subtract(DateTime.UnixEpoch).TotalSeconds * 2.0;
+				int starY = centerY - unitR - Math.Max(6, (int)(CellRadius * 0.28));
+				int spread = Math.Max(6, (int)(CellRadius * 0.35));
+				int starSize = Math.Max(16, (int)(CellRadius * 0.5));
+				for (int i = 0; i < 3; i++)
+				{
+					double angle = t + i * (2.0 * Math.PI / 3.0);
+					int sx = centerX + (int)(spread * Math.Cos(angle));
+					int sy = starY + (int)(spread * 0.4 * Math.Sin(angle));
+					DrawText(canvas, "*", starSize, new SKColor(255, 220, 50), sx, sy);
+				}
+			}
+		}
+
+		// =====================================================================
+		// Trait panel (left side)
+		// =====================================================================
+
+		private static readonly Dictionary<TraitType, SKColor> TraitColors = new()
+		{
+			{ TraitType.VANGUARD,  new SKColor(180, 140, 60) },
+			{ TraitType.DUELIST,   new SKColor(200, 80, 80) },
+			{ TraitType.RANGER,    new SKColor(100, 180, 60) },
+			{ TraitType.ARCANE,    new SKColor(140, 100, 220) },
+			{ TraitType.WILD,      new SKColor(80, 170, 80) },
+			{ TraitType.ELEMENTAL, new SKColor(80, 160, 200) },
+		};
+
+		public void DrawTraitPanel(SKCanvas canvas, CombatEngine? engine, Player? viewedPlayer, int mouseX, int mouseY)
+		{
+			List<TraitSummary> summaries;
+
+			if (engine != null)
+			{
+				// Use snapshot so unit deaths don't alter the displayed traits
+				if (engine.TraitSnapshots.TryGetValue(Team.TEAM_1, out var snapshot))
+					summaries = snapshot;
+				else
+					summaries = TraitManager.GetTraitSummary(Board.GetUnitsByTeam(Team.TEAM_1));
+			}
+			else if (viewedPlayer != null)
+			{
+				var boardUnits = viewedPlayer.UnitsOnBoard.Values.Where(u => u != null)!;
+				summaries = TraitManager.GetTraitSummary(boardUnits!);
+			}
+			else
+			{
+				return;
+			}
+			if (summaries.Count == 0) return;
+
+			int entryH = Math.Max(24, (int)(CellRadius * 0.9));
+			int gap = Math.Max(2, (int)(CellRadius * 0.08));
+			int panelW = Math.Max(120, LeftOffset - Margin);
+			int panelX = Margin / 2;
+			int startY = Margin;
+			int fontSize = Math.Max(10, (int)(entryH * 0.45));
+
+			for (int i = 0; i < summaries.Count; i++)
+			{
+				var trait = summaries[i];
+				float y = startY + i * (entryH + gap);
+				var rect = new SKRect(panelX, y, panelX + panelW, y + entryH);
+
+				// Background
+				SKColor bg = trait.IsActive ? new SKColor(45, 50, 60) : new SKColor(35, 35, 40);
+				using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = bg, IsAntialias = UseAntialiasing })
+					canvas.DrawRoundRect(rect, 4, 4, p);
+
+				// Left color bar indicator
+				var traitColor = TraitColors.TryGetValue(trait.TraitType, out var tc) ? tc : new SKColor(150, 150, 150);
+				if (!trait.IsActive)
+					traitColor = new SKColor((byte)(traitColor.Red / 2), (byte)(traitColor.Green / 2), (byte)(traitColor.Blue / 2));
+
+				float barW = Math.Max(3, panelW * 0.03f);
+				using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = traitColor, IsAntialias = UseAntialiasing })
+					canvas.DrawRoundRect(new SKRect(rect.Left, rect.Top, rect.Left + barW, rect.Bottom), 4, 0, p);
+
+				// Trait name
+				float textX = rect.Left + barW + 4;
+				float nameY = rect.MidY - entryH * 0.12f;
+				var nameColor = trait.IsActive ? new SKColor(240, 240, 240) : new SKColor(140, 140, 140);
+				DrawTextLeftAligned(canvas, trait.Name, fontSize, nameColor, textX, nameY);
+
+				// Breakpoint pips on the right side
+				float pipRight = rect.Right - 4;
+				float pipY = rect.MidY;
+				int pipSize = Math.Max(6, (int)(entryH * 0.28));
+				int pipGap = Math.Max(2, pipSize / 3);
+
+				// Draw pips right-to-left for each breakpoint
+				float pipX = pipRight;
+				for (int bpIdx = trait.Breakpoints.Length - 1; bpIdx >= 0; bpIdx--)
+				{
+					int bpVal = trait.Breakpoints[bpIdx];
+					bool reached = trait.CurrentCount >= bpVal;
+
+					pipX -= pipSize;
+
+					// Pip background
+					var pipColor = reached ? traitColor : new SKColor(60, 60, 70);
+					using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = pipColor, IsAntialias = UseAntialiasing })
+						canvas.DrawRoundRect(new SKRect(pipX, pipY - pipSize / 2f, pipX + pipSize, pipY + pipSize / 2f), 2, 2, p);
+
+					// Breakpoint number inside pip
+					int pipFontSize = Math.Max(7, (int)(pipSize * 0.75));
+					DrawText(canvas, bpVal.ToString(), pipFontSize,
+						reached ? new SKColor(255, 255, 255) : new SKColor(100, 100, 110),
+						pipX + pipSize / 2f, pipY);
+
+					pipX -= pipGap;
+				}
+
+				// Count label between name and pips
+				float countX = pipX - 4;
+				string countStr = trait.CurrentCount.ToString();
+				var countColor = trait.IsActive ? traitColor : new SKColor(120, 120, 130);
+				DrawTextRight(canvas, countStr, fontSize, countColor, countX, rect.MidY);
+
+				// Hover tooltip
+				if (mouseX >= rect.Left && mouseX <= rect.Right && mouseY >= rect.Top && mouseY <= rect.Bottom)
+				{
+					BuildTraitTooltip(trait, mouseX, mouseY);
+				}
+			}
+		}
+
+		private void BuildTraitTooltip(TraitSummary trait, int mouseX, int mouseY)
+		{
+			if (!TraitRegistry.Definitions.TryGetValue(trait.TraitType, out var def)) return;
+
+			int pad = Math.Max(6, CellRadius / 3);
+			int lineH = TooltipFontSize + 4;
+			var measure = new SKPaint { TextSize = TooltipFontSize, IsAntialias = UseAntialiasing };
+
+			// Title line
+			string title = $"{def.Name} ({trait.CurrentCount})";
+			var titleBounds = new SKRect();
+			measure.MeasureText(title, ref titleBounds);
+
+			// Build breakpoint description lines
+			var lines = new List<(string text, SKColor color)>();
+			foreach (var bp in def.Breakpoints)
+			{
+				bool active = trait.CurrentCount >= bp.RequiredCount;
+				string prefix = active ? "\u2714 " : "\u25cb ";
+				string bpHeader = $"{prefix}({bp.RequiredCount}) ";
+				var bonusParts = new List<string>();
+				foreach (var bonus in bp.Bonuses)
+				{
+					string statName = bonus.Stat.ToString().Replace('_', ' ');
+					string valStr = bonus.IsMultiplicative
+						? $"+{bonus.Value * 100:0}%"
+						: $"+{bonus.Value:0}";
+					string scope = bonus.Scope == TraitBonusScope.ALL_TEAM ? " (team)" : "";
+					bonusParts.Add($"{valStr} {statName}{scope}");
+				}
+				string line = bpHeader + string.Join(", ", bonusParts);
+				var color = active ? new SKColor(200, 255, 200) : new SKColor(160, 160, 170);
+				lines.Add((line, color));
+			}
+
+			// Measure max width
+			int maxW = (int)titleBounds.Width;
+			foreach (var (text, _) in lines)
+			{
+				var r = new SKRect();
+				measure.MeasureText(text, ref r);
+				maxW = Math.Max(maxW, (int)r.Width);
+			}
+
+			int boxW = maxW + pad * 2;
+			int boxH = pad + (int)titleBounds.Height + pad / 2 + lines.Count * lineH + pad;
+			int bx = mouseX + 12;
+			int by = mouseY + 12;
+			if (bx + boxW > WindowWidth - 4) bx = mouseX - boxW - 12;
+			if (by + boxH > WindowHeight - 4) by = mouseY - boxH - 12;
+
+			var bmp = new SKBitmap(boxW, boxH, SKColorType.Rgba8888, SKAlphaType.Premul);
+			using (var surf = new SKCanvas(bmp))
+			{
+				using (var pb = new SKPaint { Style = SKPaintStyle.Fill, Color = new SKColor(30, 30, 30, 220), IsAntialias = UseAntialiasing })
+					surf.DrawRoundRect(new SKRect(0, 0, boxW, boxH), 6, 6, pb);
+				using (var pborder = new SKPaint { Style = SKPaintStyle.Stroke, Color = new SKColor(120, 120, 120), StrokeWidth = 1, IsAntialias = UseAntialiasing })
+					surf.DrawRoundRect(new SKRect(0, 0, boxW, boxH), 6, 6, pborder);
+
+				var traitColor = TraitColors.TryGetValue(trait.TraitType, out var tc2) ? tc2 : new SKColor(200, 200, 200);
+				DrawTextLeft(surf, title, TooltipFontSize, traitColor, pad, pad + (int)titleBounds.Height / 2);
+
+				int yoff = pad + (int)titleBounds.Height + pad / 2;
+				foreach (var (text, color) in lines)
+				{
+					DrawTextLeft(surf, text, TooltipFontSize, color, pad, yoff);
+					yoff += lineH;
+				}
+			}
+			_deferredTooltips.Add((bmp, bx, by));
+		}
+
+		private void DrawTextLeftAligned(SKCanvas canvas, string text, int fontSize, SKColor color, float leftX, float centerY)
+		{
+			using var p = new SKPaint { Color = color, IsAntialias = UseAntialiasing, TextSize = fontSize };
+			var bounds = new SKRect();
+			p.MeasureText(text, ref bounds);
+			canvas.DrawText(text, leftX - bounds.Left, centerY - bounds.MidY, p);
+		}
+
+// =====================================================================
+		// Player list panel (right side)
+		// =====================================================================
+
+		/// <summary>
+		/// Returns the rect for a player entry in the right-side player list.
+		/// Entries are stacked vertically starting from the top.
+		/// </summary>
+		public SKRect GetPlayerEntryRect(int index, int totalPlayers)
+		{
+			int entryW = Math.Max(160, (int)(CellRadius * 5));
+			int entryH = Math.Max(36, (int)(CellRadius * 1.3));
+			int gap = Math.Max(4, (int)(CellRadius * 0.15));
+			int panelX = WindowWidth - entryW - Margin;
+			int panelY = Margin + index * (entryH + gap);
+			return new SKRect(panelX, panelY, panelX + entryW, panelY + entryH);
+		}
+
+		/// <summary>
+		/// Draws the player list panel on the right side of the window.
+		/// Players are ordered by health descending, with health bars and level indicators.
+		/// </summary>
+		public void DrawPlayerListPanel(SKCanvas canvas, List<PlayerListEntry>? playerList, int? inspectedPlayerId, int mouseX, int mouseY)
+		{
+			if (playerList == null || playerList.Count == 0) return;
+
+			int total = playerList.Count;
+			for (int i = 0; i < total; i++)
+			{
+				var entry = playerList[i];
+				var rect = GetPlayerEntryRect(i, total);
+				bool isHovered = mouseX >= rect.Left && mouseX <= rect.Right && mouseY >= rect.Top && mouseY <= rect.Bottom;
+				bool isInspected = inspectedPlayerId.HasValue && inspectedPlayerId.Value == entry.PlayerId;
+
+				// Background
+				SKColor bg;
+				if (isInspected) bg = new SKColor(70, 100, 140);
+				else if (entry.IsMe) bg = new SKColor(50, 70, 90);
+				else if (isHovered) bg = new SKColor(55, 55, 65);
+				else bg = new SKColor(40, 40, 50);
+
+				if (!entry.IsAlive) bg = new SKColor((byte)(bg.Red / 2), (byte)(bg.Green / 2), (byte)(bg.Blue / 2));
+
+				using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = bg, IsAntialias = UseAntialiasing })
+					canvas.DrawRoundRect(rect, 6, 6, p);
+
+				// Border
+				var borderColor = entry.IsMe ? new SKColor(100, 180, 255) :
+								  isInspected ? new SKColor(200, 200, 100) :
+								  new SKColor(80, 80, 80);
+				using (var p = new SKPaint { Style = SKPaintStyle.Stroke, Color = borderColor, StrokeWidth = entry.IsMe || isInspected ? 2 : 1, IsAntialias = UseAntialiasing })
+					canvas.DrawRoundRect(rect, 6, 6, p);
+
+				// Player icon (colored circle)
+				float iconR = Math.Max(8, (rect.Height - 8) / 2f);
+				float iconCx = rect.Left + 6 + iconR;
+				float iconCy = rect.MidY;
+				var iconColor = entry.IsAlive
+					? (entry.IsMe ? new SKColor(100, 180, 255) : new SKColor(180, 180, 180))
+					: new SKColor(100, 50, 50);
+				using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = iconColor, IsAntialias = UseAntialiasing })
+					canvas.DrawCircle(iconCx, iconCy, iconR, p);
+
+				// Player number inside icon
+				int iconFontSize = Math.Max(10, (int)(iconR * 1.1f));
+				DrawText(canvas, entry.PlayerId.ToString(), iconFontSize, new SKColor(30, 30, 30), iconCx, iconCy);
+
+				// Combat status badge (bottom-right of icon)
+				if (entry.CombatOutcome.HasValue || (entry.IsAlive && entry.CombatOutcome == null && playerList.Any(e => e.CombatOutcome.HasValue)))
+				{
+					float badgeR = Math.Max(5, iconR * 0.45f);
+					float badgeCx = iconCx + iconR * 0.6f;
+					float badgeCy = iconCy + iconR * 0.6f;
+					int badgeFontSize = Math.Max(8, (int)(badgeR * 1.4f));
+
+					if (entry.CombatOutcome == 1)
+					{
+						// Win: green circle with checkmark
+						using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = new SKColor(40, 160, 40), IsAntialias = true })
+							canvas.DrawCircle(badgeCx, badgeCy, badgeR, p);
+						DrawText(canvas, "V", badgeFontSize, new SKColor(255, 255, 255), badgeCx, badgeCy);
+					}
+					else if (entry.CombatOutcome == 2 || entry.CombatOutcome == 0)
+					{
+						// Loss or draw: red circle with X
+						using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = new SKColor(180, 50, 50), IsAntialias = true })
+							canvas.DrawCircle(badgeCx, badgeCy, badgeR, p);
+						DrawText(canvas, "X", badgeFontSize, new SKColor(255, 255, 255), badgeCx, badgeCy);
+					}
+					else
+					{
+						// Ongoing: gray circle with dots
+						using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = new SKColor(100, 100, 110), IsAntialias = true })
+							canvas.DrawCircle(badgeCx, badgeCy, badgeR, p);
+						DrawText(canvas, "..", badgeFontSize, new SKColor(220, 220, 220), badgeCx, badgeCy);
+					}
+				}
+
+				// Health bar
+				float barLeft = iconCx + iconR + 6;
+				float barRight = rect.Right - 6;
+				float barW = barRight - barLeft;
+				float barH = Math.Max(8, rect.Height * 0.28f);
+				float barY = rect.MidY - barH / 2f - 2;
+				float healthFrac = entry.MaxHealth > 0 ? Math.Clamp((float)entry.Health / entry.MaxHealth, 0f, 1f) : 0f;
+
+				// Bar background
+				using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = new SKColor(30, 30, 30), IsAntialias = UseAntialiasing })
+					canvas.DrawRoundRect(new SKRect(barLeft, barY, barRight, barY + barH), 3, 3, p);
+
+				// Bar fill
+				var hpColor = healthFrac > 0.5f ? new SKColor(60, 180, 60) :
+							  healthFrac > 0.25f ? new SKColor(220, 180, 40) :
+							  new SKColor(200, 50, 50);
+				if (!entry.IsAlive) hpColor = new SKColor(100, 40, 40);
+				float fillW = barW * healthFrac;
+				if (fillW > 0)
+				{
+					using (var p = new SKPaint { Style = SKPaintStyle.Fill, Color = hpColor, IsAntialias = UseAntialiasing })
+						canvas.DrawRoundRect(new SKRect(barLeft, barY, barLeft + fillW, barY + barH), 3, 3, p);
+				}
+
+				// Health text
+				int hpFontSize = Math.Max(9, (int)(barH * 0.9f));
+				string hpText = $"{entry.Health}/{entry.MaxHealth}";
+				DrawText(canvas, hpText, hpFontSize, new SKColor(255, 255, 255), barLeft + barW / 2f, barY + barH / 2f);
+
+				// Level text below health bar
+				int lvlFontSize = Math.Max(9, TooltipFontSize - 2);
+				float lvlY = barY + barH + lvlFontSize * 0.7f;
+				string lvlText = $"Lv {entry.Level}";
+				var lvlColor = entry.IsAlive ? new SKColor(180, 200, 220) : new SKColor(120, 120, 120);
+				DrawText(canvas, lvlText, lvlFontSize, lvlColor, barLeft + barW / 2f, lvlY);
+
+				// Dead overlay text
+				if (!entry.IsAlive)
+				{
+					DrawText(canvas, "ELIMINATED", Math.Max(10, TooltipFontSize - 1), new SKColor(200, 80, 80), rect.MidX, rect.MidY);
+				}
 			}
 		}
 

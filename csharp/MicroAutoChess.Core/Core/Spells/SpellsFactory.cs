@@ -14,6 +14,11 @@ namespace MicroAutoChess.Core.Spells
                 "Heal" => new SelfHealSpell(),
                 "Assassin Blink" => new AssassinBlinkSpell(),
                 "Attack Speed Buff" => new AttackSpeedBuffSpell(),
+                "Lightning" => new LightningSpell(),
+                "Self Shield" => new SelfShieldSpell(),
+                "Bash" => new SingleTargetStunSpell(),
+                "Shockwave" => new AoEStunSpell(),
+                "Plague" => new SingleTargetDotSpell(),
                 _ => null
             };
         }

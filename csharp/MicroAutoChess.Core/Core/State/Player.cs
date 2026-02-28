@@ -34,6 +34,7 @@ namespace MicroAutoChess.Core
             Health = GameParams.InitialPlayerHealth;
             Gold = GameParams.InitialPlayerGold;
             Level = GameParams.InitialPlayerLevel;
+            MaxUnitsOnBoard = Level;
             Experience = 0;
 
             // initialize bench slots
@@ -48,36 +49,14 @@ namespace MicroAutoChess.Core
         {
             ShopUnits.Clear();
             var types = Enum.GetValues(typeof(UnitType));
+            var rarities = GameParams.UnitTypeRarities;
             for (int i = 0; i < 5; i++)
             {
                 var ut = (UnitType)types.GetValue(_rand.Next(types.Length))!;
-                var rarity = GetRandomRarity();
+                var rarity = rarities.TryGetValue(ut, out var r) ? r : UnitRarity.COMMON;
                 var u = new Unit(ut, rarity, team);
                 ShopUnits.Add(u);
             }
-        }
-
-        private UnitRarity GetRandomRarity()
-        {
-            // probabilities roughly ported from Python mapping
-            double[][] probs = new double[][] {
-                new double[] {0.6, 0.3, 0.1, 0.0, 0.0},
-                new double[] {0.5, 0.35, 0.13, 0.02, 0.0},
-                new double[] {0.4, 0.35, 0.2, 0.05, 0.0},
-                new double[] {0.3, 0.3, 0.25, 0.13, 0.02},
-                new double[] {0.2, 0.25, 0.25, 0.25, 0.05}
-            };
-            int idx = Math.Min(Level, 5) - 1;
-            if (idx < 0) idx = 0;
-            var dist = probs[idx];
-            double r = _rand.NextDouble();
-            double accum = 0.0;
-            for (int i = 0; i < dist.Length; i++)
-            {
-                accum += dist[i];
-                if (r <= accum) return (UnitRarity)(i + 1);
-            }
-            return UnitRarity.COMMON;
         }
 
         public bool BuyUnit(int shopIndex)

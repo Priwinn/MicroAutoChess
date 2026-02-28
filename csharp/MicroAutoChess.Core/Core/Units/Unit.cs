@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MicroAutoChess.Core.Spells;
+using MicroAutoChess.Core.Traits;
+using MicroAutoChess.Core.UnitTypes;
 
 namespace MicroAutoChess.Core
 {
@@ -26,8 +29,16 @@ namespace MicroAutoChess.Core
         public double BasicAttackOverflow { get; set; } = 0.0;
         public Unit? CurrentTarget { get; set; }
         public Dictionary<string, double> Buffs { get; set; } = new Dictionary<string, double>();
+        public List<StatusEffect> ActiveStatusEffects { get; set; } = new List<StatusEffect>();
 
         public UnitStats BaseStats { get; set; }
+        public GameParams? Params { get; set; }
+
+        /// <summary>
+        /// Per-unit combat log reference. Defaults to the global log but can be
+        /// overridden per-engine so each combat writes to its own log.
+        /// </summary>
+        public List<CombatEvent> CombatLog { get; set; } = GlobalLog.CombatLog;
 
         public Unit(UnitType unitType, UnitRarity rarity, Team team)
         {
@@ -42,33 +53,58 @@ namespace MicroAutoChess.Core
 
         private UnitStats GetDefaultStats(UnitType ut)
         {
-            // Map similar defaults from Python implementation
             return ut switch
             {
-                UnitType.WARRIOR => new UnitStats(health:1200, attack:65, spellPower:1, defense:40, resistance:40, range:1) { Spell = SpellsFactory.GetSpellInstanceByName("Spin Slash"), AttackSpeed = 1.0 },
-                UnitType.ARCHER => new UnitStats(health:700, attack:60, spellPower:1, defense:20, resistance:20, range:4) { Spell = SpellsFactory.GetSpellInstanceByName("Attack Speed Buff"), MaxMana = 70, AttackSpeed = 1.0 },
-                UnitType.MAGE => new UnitStats(health:600, attack:40, spellPower:1, defense:20, resistance:20, range:4) { Spell = SpellsFactory.GetSpellInstanceByName("Fireball"), MaxMana = 50 },
-                UnitType.TANK => new UnitStats(health:1500, attack:50, spellPower:1, defense:60, resistance:60, range:1) { Spell = SpellsFactory.GetSpellInstanceByName("Heal"), AttackSpeed = 0.8 },
-                UnitType.ASSASSIN => new UnitStats(health:800, attack:60, spellPower:1, defense:25, resistance:30, range:1) { Spell = SpellsFactory.GetSpellInstanceByName("Assassin Blink"), MaxMana = 50, CritRate = 0.5, AttackSpeed = 1.2 },
-                UnitType.SUPPORT => new UnitStats(health:900, attack:25, spellPower:1, defense:20, resistance:20, range:4) { MaxMana = 80 },
+                UnitType.WARRIOR => WarriorDef.CreateStats(),
+                UnitType.ARCHER => ArcherDef.CreateStats(),
+                UnitType.MAGE => MageDef.CreateStats(),
+                UnitType.TANK => TankDef.CreateStats(),
+                UnitType.ASSASSIN => AssassinDef.CreateStats(),
+                UnitType.LIGHTNING_MAGE => LightningMageDef.CreateStats(),
+                UnitType.ICE_TANK => IceTankDef.CreateStats(),
+                UnitType.EARTH_TANK => EarthTankDef.CreateStats(),
+                UnitType.FOREST_ARCHER => ForestArcherDef.CreateStats(),
                 _ => new UnitStats(health:100, attack:10, spellPower:1, defense:5, resistance:5, range:1)
             };
         }
 
         public double GetMaxHealth()
         {
-            return BaseStats.Health * (1 + (Level - 1) * 0.5);
+            double scale = Params?.HealthScalingPerLevel ?? 0.5;
+            double baseVal = BaseStats.Health * (1 + (Level - 1) * scale);
+            return baseVal + GetStatBuffAdditive(StatType.HEALTH);
         }
 
         public double GetAttack()
         {
-            return BaseStats.Attack * (1 + (Level - 1) * 0.3);
+            double scale = Params?.AttackScalingPerLevel ?? 0.3;
+            double baseVal = BaseStats.Attack * (1 + (Level - 1) * scale);
+            return (baseVal + GetStatBuffAdditive(StatType.ATTACK)) * GetStatBuffMultiplicative(StatType.ATTACK);
         }
 
-        public double GetDefense() => BaseStats.Defense;
-        public double GetResistance() => BaseStats.Resistance;
+        public double GetDefense()
+        {
+            return (BaseStats.Defense + GetStatBuffAdditive(StatType.DEFENSE)) * GetStatBuffMultiplicative(StatType.DEFENSE);
+        }
 
-        public double GetAttackSpeed() => BaseStats.AttackSpeed * (Buffs.ContainsKey("attack_speed") ? Buffs["attack_speed"] : 1.0);
+        public double GetResistance()
+        {
+            return (BaseStats.Resistance + GetStatBuffAdditive(StatType.RESISTANCE)) * GetStatBuffMultiplicative(StatType.RESISTANCE);
+        }
+
+        public double GetAttackSpeed()
+        {
+            double oldBuff = Buffs.ContainsKey("attack_speed") ? Buffs["attack_speed"] : 1.0;
+            double baseVal = BaseStats.AttackSpeed * oldBuff;
+            return (baseVal + GetStatBuffAdditive(StatType.ATTACK_SPEED)) * GetStatBuffMultiplicative(StatType.ATTACK_SPEED);
+        }
+
+        public double GetSpellPower()
+        {
+            return (BaseStats.SpellPower + GetStatBuffAdditive(StatType.SPELL_POWER)) * GetStatBuffMultiplicative(StatType.SPELL_POWER);
+        }
+
+        public bool IsStunned => ActiveStatusEffects.Any(e => e.EffectType == StatusEffectType.STUN && !e.IsExpired);
 
         public int GetCost()
         {
@@ -104,9 +140,14 @@ namespace MicroAutoChess.Core
                 mitigatedDamage = damageObj.Value;
             }
 
-            double actualDamage = Math.Min(mitigatedDamage, CurrentHealth);
+            double afterShield = AbsorbDamageWithShields(mitigatedDamage);
+            double actualDamage = Math.Min(afterShield, CurrentHealth);
             CurrentHealth -= actualDamage;
             PostmigitationMana(actualDamage);
+
+            double rawDamage = damageObj.Value;
+            double mitigatedAmount = rawDamage - mitigatedDamage;
+            if (mitigatedAmount < 0) mitigatedAmount = 0;
 
             var ev = new CombatEvent
             {
@@ -116,12 +157,15 @@ namespace MicroAutoChess.Core
                 EventType = CombatEventType.DAMAGE_DEALT,
                 SpellName = string.IsNullOrEmpty(spellName) ? null : spellName,
                 Damage = actualDamage,
+                RawDamage = rawDamage,
+                DamageMitigated = mitigatedAmount,
                 CritBool = damageObj.Crit,
+                IsDot = damageObj.Dot,
                 Position = Position,
                 Description = $"{(source != null ? source.UnitType.ToString() : "Unknown")} dealt {actualDamage} {damageObj.DmgType} damage to {UnitType}{(damageObj.Crit ? " with a crit" : "")}",
                 MatchId = null
             };
-            try { GlobalLog.CombatLog.Add(ev); } catch { }
+            try { CombatLog.Add(ev); } catch { }
 
             if (CurrentHealth <= 0)
             {
@@ -138,7 +182,7 @@ namespace MicroAutoChess.Core
                     Description = $"{UnitType} died.",
                     MatchId = null
                 };
-                try { GlobalLog.CombatLog.Add(death); } catch { }
+                try { CombatLog.Add(death); } catch { }
             }
 
             return actualDamage;
@@ -163,7 +207,7 @@ namespace MicroAutoChess.Core
                 Description = $"{UnitType} healed for {damageObj.Value} health.",
                 MatchId = null
             };
-            try { GlobalLog.CombatLog.Add(ev); } catch { }
+            try { CombatLog.Add(ev); } catch { }
         }
 
         public (double, bool) GetBasicFinalDamage(double critRoll)
@@ -176,8 +220,8 @@ namespace MicroAutoChess.Core
 
         public void AddBasicAttackMana() => CurrentMana += BasicAttackMana;
 
-        public void PremigitationMana(double dmg) => CurrentMana = Math.Min(BaseStats.MaxMana, CurrentMana + 0.01 * dmg);
-        public void PostmigitationMana(double dmg) => CurrentMana = Math.Min(BaseStats.MaxMana, CurrentMana + 0.07 * dmg);
+        public void PremigitationMana(double dmg) => CurrentMana = Math.Min(BaseStats.MaxMana, CurrentMana + (Params?.PreMitigationManaRate ?? 0.01) * dmg);
+        public void PostmigitationMana(double dmg) => CurrentMana = Math.Min(BaseStats.MaxMana, CurrentMana + (Params?.PostMitigationManaRate ?? 0.07) * dmg);
 
         public void LevelUp()
         {
@@ -196,21 +240,42 @@ namespace MicroAutoChess.Core
         {
             return UnitType switch
             {
-                UnitType.WARRIOR => "W",
-                UnitType.ARCHER => "A",
-                UnitType.MAGE => "M",
-                UnitType.TANK => "T",
-                UnitType.ASSASSIN => "S",
-                UnitType.SUPPORT => "H",
+                UnitType.WARRIOR => WarriorDef.Symbol,
+                UnitType.ARCHER => ArcherDef.Symbol,
+                UnitType.MAGE => MageDef.Symbol,
+                UnitType.TANK => TankDef.Symbol,
+                UnitType.ASSASSIN => AssassinDef.Symbol,
+                UnitType.LIGHTNING_MAGE => LightningMageDef.Symbol,
+                UnitType.ICE_TANK => IceTankDef.Symbol,
+                UnitType.EARTH_TANK => EarthTankDef.Symbol,
+                UnitType.FOREST_ARCHER => ForestArcherDef.Symbol,
                 _ => "U",
+            };
+        }
+
+        public static TraitType[] GetTraits(UnitType ut)
+        {
+            return ut switch
+            {
+                UnitType.WARRIOR => WarriorDef.Traits,
+                UnitType.ARCHER => ArcherDef.Traits,
+                UnitType.MAGE => MageDef.Traits,
+                UnitType.TANK => TankDef.Traits,
+                UnitType.ASSASSIN => AssassinDef.Traits,
+                UnitType.LIGHTNING_MAGE => LightningMageDef.Traits,
+                UnitType.ICE_TANK => IceTankDef.Traits,
+                UnitType.EARTH_TANK => EarthTankDef.Traits,
+                UnitType.FOREST_ARCHER => ForestArcherDef.Traits,
+                _ => Array.Empty<TraitType>(),
             };
         }
 
         public void RoundReset()
         {
+            Buffs.Clear();
+            ActiveStatusEffects.Clear();
             CurrentHealth = GetMaxHealth();
             CurrentMana = BaseStats.InitialMana;
-            Buffs.Clear();
             CurrentTarget = null;
             BasicAttackOverflow = 0.0;
             try { BaseStats.Spell?.RoundReset(); } catch { }
@@ -231,7 +296,96 @@ namespace MicroAutoChess.Core
             u.InitialPosition = this.InitialPosition;
             u.PlannedPosition = this.PlannedPosition;
             u.Buffs = new Dictionary<string, double>(this.Buffs);
+            u.ActiveStatusEffects = this.ActiveStatusEffects.Select(e => e.Clone()).ToList();
             return u;
+        }
+
+        // ── Status effect helpers ──
+
+        public void ApplyStatusEffect(StatusEffect effect, int frameNumber)
+        {
+            effect.AppliedFrame = frameNumber;
+            ActiveStatusEffects.Add(effect);
+            try
+            {
+                CombatLog.Add(new CombatEvent
+                {
+                    FrameNumber = frameNumber,
+                    Target = this,
+                    EventType = CombatEventType.STATUS_EFFECT_APPLIED,
+                    SpellName = effect.Name,
+                    Description = $"{UnitType} receives {effect.Name} ({effect.EffectType}, {effect.RemainingDuration} frames)"
+                });
+            }
+            catch { }
+        }
+
+        public void TickStatusEffects(int frameNumber)
+        {
+            // Tick all active effects (DoTs deal damage, durations decrement)
+            for (int i = ActiveStatusEffects.Count - 1; i >= 0; i--)
+            {
+                var effect = ActiveStatusEffects[i];
+                if (!effect.IsExpired)
+                    effect.Tick(this, frameNumber);
+            }
+            RemoveExpiredEffects(frameNumber);
+        }
+
+        private void RemoveExpiredEffects(int frameNumber)
+        {
+            for (int i = ActiveStatusEffects.Count - 1; i >= 0; i--)
+            {
+                if (ActiveStatusEffects[i].IsExpired)
+                {
+                    var e = ActiveStatusEffects[i];
+                    try
+                    {
+                        CombatLog.Add(new CombatEvent
+                        {
+                            FrameNumber = frameNumber,
+                            Target = this,
+                            EventType = CombatEventType.STATUS_EFFECT_REMOVED,
+                            SpellName = e.Name,
+                            Description = $"{e.Name} expired on {UnitType}"
+                        });
+                    }
+                    catch { }
+                    ActiveStatusEffects.RemoveAt(i);
+                }
+            }
+        }
+
+        public double AbsorbDamageWithShields(double damage)
+        {
+            foreach (var effect in ActiveStatusEffects)
+            {
+                if (damage <= 0) break;
+                damage = effect.AbsorbDamage(damage);
+            }
+            return damage;
+        }
+
+        private double GetStatBuffAdditive(StatType stat)
+        {
+            double val = 0;
+            foreach (var e in ActiveStatusEffects)
+            {
+                if (e.EffectType == StatusEffectType.STAT_BUFF && e.BuffStat == stat && !e.IsMultiplicative && !e.IsExpired)
+                    val += e.BuffValue;
+            }
+            return val;
+        }
+
+        private double GetStatBuffMultiplicative(StatType stat)
+        {
+            double val = 1.0;
+            foreach (var e in ActiveStatusEffects)
+            {
+                if (e.EffectType == StatusEffectType.STAT_BUFF && e.BuffStat == stat && e.IsMultiplicative && !e.IsExpired)
+                    val *= (1 + e.BuffValue);
+            }
+            return val;
         }
     }
 }

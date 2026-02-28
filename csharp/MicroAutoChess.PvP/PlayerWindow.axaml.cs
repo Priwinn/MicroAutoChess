@@ -5,6 +5,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using MicroAutoChess.AvaloniaApp;
 using MicroAutoChess.Core;
+using SkiaSharp;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -12,7 +13,7 @@ using System.Runtime.InteropServices;
 
 namespace MicroAutoChess.PvPApp
 {
-    public partial class PlayerWindow : Window
+    public partial class PlayerWindow : Window, IPlayerView
     {
         private readonly PvPOrchestrator _orchestrator;
         private readonly int _playerId;
@@ -31,6 +32,11 @@ namespace MicroAutoChess.PvPApp
         // During combat, we may render a different board (the host's board)
         private Board? _combatBoard;
         private SkiaBoardVisualizer? _combatVisualizer;
+
+        // Player inspection: view another player's board
+        private int? _inspectedPlayerId;
+        private Board? _inspectedBoard;
+        private SkiaBoardVisualizer? _inspectedVisualizer;
 
         // Required by XAML loader; not used at runtime.
         public PlayerWindow() : this(null!, 0) { }
@@ -86,11 +92,11 @@ namespace MicroAutoChess.PvPApp
 
         /// <summary>The visualizer to use for the current phase.</summary>
         private SkiaBoardVisualizer ActiveVisualizer =>
-            _combatVisualizer ?? _skiaVisualizer;
+            _inspectedVisualizer ?? _combatVisualizer ?? _skiaVisualizer;
 
         /// <summary>The board to render for the current phase.</summary>
         private Board ActiveBoard =>
-            _combatBoard ?? _myBoard;
+            _inspectedBoard ?? _combatBoard ?? _myBoard;
 
         // =====================================================================
         // Phase lifecycle (called by HumanPlayer via orchestrator)
@@ -101,11 +107,20 @@ namespace MicroAutoChess.PvPApp
             // Switch back to own board
             _combatBoard = null;
             _combatVisualizer = null;
+            // Clear inspection when returning to preparation
+            _inspectedPlayerId = null;
+            _inspectedBoard = null;
+            _inspectedVisualizer = null;
             UpdateShopSpecs();
         }
 
         public void OnCombatPhase()
         {
+            // Clear inspection when combat starts (board state changes)
+            _inspectedPlayerId = null;
+            _inspectedBoard = null;
+            _inspectedVisualizer = null;
+
             // Determine which board hosts our combat
             var hostId = _manager.GetCombatHostForPlayer(_playerId);
             if (hostId.HasValue && hostId.Value != _playerId)
@@ -149,6 +164,71 @@ namespace MicroAutoChess.PvPApp
             var pauseRect = viz.GetPauseButtonRect();
             var speedUpRect = viz.GetSpeedUpRect();
             var speedDownRect = viz.GetSpeedDownRect();
+
+            // Player list panel clicks (inspect other players' boards)
+            {
+                // Damage meter tab clicks
+                int tabHit = viz.HitTestMeterTab(mx, my);
+                if (tabHit >= 0)
+                {
+                    viz.ActiveMeterTab = tabHit;
+                    ev.Pointer.Capture(null);
+                    return;
+                }
+
+                var playerList = BuildPlayerList();
+                for (int i = 0; i < playerList.Count; i++)
+                {
+                    var rect = _skiaVisualizer.GetPlayerEntryRect(i, playerList.Count);
+                    if (mx >= rect.Left && mx <= rect.Right && my >= rect.Top && my <= rect.Bottom)
+                    {
+                        var entry = playerList[i];
+                        if (entry.IsMe)
+                        {
+                            // Click on self → clear inspection
+                            _inspectedPlayerId = null;
+                            _inspectedBoard = null;
+                            _inspectedVisualizer = null;
+                        }
+                        else
+                        {
+                            // Click on another player → inspect their board
+                            _inspectedPlayerId = entry.PlayerId;
+                            var bounds = this.ClientSize;
+                            int w = Math.Max(1, (int)bounds.Width);
+                            int h = Math.Max(1, (int)bounds.Height);
+                            int baseCell = Math.Max(20, (int)(Math.Min(w, h) * 0.03));
+
+                            // During combat, view the inspected player's combat host board
+                            if (_manager.Phase == PvPGamePhase.COMBAT)
+                            {
+                                var inspectedHostId = _manager.GetCombatHostForPlayer(entry.PlayerId);
+                                _inspectedBoard = inspectedHostId.HasValue
+                                    ? _manager.GetBoard(inspectedHostId.Value)
+                                    : _manager.GetBoard(entry.PlayerId);
+                            }
+                            else
+                            {
+                                _inspectedBoard = _manager.GetBoard(entry.PlayerId);
+                            }
+
+                            _inspectedVisualizer = new SkiaBoardVisualizer(
+                                _inspectedBoard, renderFps: 30, cellRadius: baseCell,
+                                margin: 16, windowWidth: w, windowHeight: h);
+                            // Show the inspected player as red/top (enemy perspective):
+                            // set ViewerTeam to the OPPOSITE of the inspected player's team
+                            var inspectedTeam = _manager.GetPlayer(entry.PlayerId).team;
+                            _inspectedVisualizer.ViewerTeam = inspectedTeam == Team.TEAM_1 ? Team.TEAM_2 : Team.TEAM_1;
+                            // Swap team colors so the inspected player always renders as red
+                            var otherTeam = inspectedTeam == Team.TEAM_1 ? Team.TEAM_2 : Team.TEAM_1;
+                            _inspectedVisualizer.TeamColors[inspectedTeam] = new SKColor(220, 100, 100); // red
+                            _inspectedVisualizer.TeamColors[otherTeam] = new SKColor(60, 140, 220);     // blue
+                        }
+                        ev.Pointer.Capture(null);
+                        return;
+                    }
+                }
+            }
 
             // Shop button clicks → BUY_UNIT
             if (_manager.Phase == PvPGamePhase.PREPARATION && _shopSpecs != null)
@@ -314,6 +394,33 @@ namespace MicroAutoChess.PvPApp
         // Rendering
         // =====================================================================
 
+        private List<PlayerListEntry> BuildPlayerList()
+        {
+            var list = new List<PlayerListEntry>();
+            foreach (var id in _manager.AllPlayerIds)
+            {
+                var p = _manager.GetPlayer(id);
+                list.Add(new PlayerListEntry
+                {
+                    PlayerId = id,
+                    Health = p.Health,
+                    MaxHealth = _manager.Params.InitialPlayerHealth,
+                    Level = p.Level,
+                    IsAlive = _manager.IsPlayerAlive(id),
+                    IsMe = id == _playerId,
+                    CombatOutcome = _manager.Phase == PvPGamePhase.COMBAT
+                        ? _manager.GetCombatOutcomeForPlayer(id) : null
+                });
+            }
+            // Sort by health descending, then by player ID ascending
+            list.Sort((a, b) =>
+            {
+                int cmp = b.Health.CompareTo(a.Health);
+                return cmp != 0 ? cmp : a.PlayerId.CompareTo(b.PlayerId);
+            });
+            return list;
+        }
+
         private void UpdateShopSpecs()
         {
             _shopSpecs.Clear();
@@ -346,8 +453,38 @@ namespace MicroAutoChess.PvPApp
             CombatEngine? engine = null;
             if (_manager.Phase == PvPGamePhase.COMBAT)
             {
-                var hostId = _manager.GetCombatHostForPlayer(_playerId);
-                if (hostId.HasValue) engine = _manager.GetCombatEngine(hostId.Value);
+                if (_inspectedPlayerId.HasValue)
+                {
+                    // When inspecting another player during combat, show their combat
+                    var inspectedHostId = _manager.GetCombatHostForPlayer(_inspectedPlayerId.Value);
+                    if (inspectedHostId.HasValue) engine = _manager.GetCombatEngine(inspectedHostId.Value);
+                }
+                else
+                {
+                    var hostId = _manager.GetCombatHostForPlayer(_playerId);
+                    if (hostId.HasValue) engine = _manager.GetCombatEngine(hostId.Value);
+                }
+            }
+
+            // Check if this player's own combat is already finished
+            bool myCombatDone = false;
+            if (_manager.Phase == PvPGamePhase.COMBAT)
+            {
+                var outcome = _manager.GetCombatOutcomeForPlayer(_playerId);
+                if (outcome.HasValue)
+                    myCombatDone = true;
+            }
+
+            // When inspecting another player, check if THAT combat is done
+            bool viewedCombatDone;
+            if (_inspectedPlayerId.HasValue && _manager.Phase == PvPGamePhase.COMBAT)
+            {
+                var inspOutcome = _manager.GetCombatOutcomeForPlayer(_inspectedPlayerId.Value);
+                viewedCombatDone = inspOutcome.HasValue;
+            }
+            else
+            {
+                viewedCombatDone = myCombatDone;
             }
 
             bool isPaused = _manager.Phase != PvPGamePhase.COMBAT;
@@ -359,11 +496,32 @@ namespace MicroAutoChess.PvPApp
             var canvas = surface.Canvas;
             canvas.Clear(new SkiaSharp.SKColor(30, 30, 30));
 
-            viz.Draw(canvas, w, h, engine, simFrame, simProgress, isPaused,
+            viz.Draw(canvas, w, h, viewedCombatDone ? null : engine, simFrame, simProgress,
+                viewedCombatDone || isPaused,
                 _lastMouseX, _lastMouseY, _shopSpecs, _myPlayer.Gold,
                 _orchestrator.EngineFps,
                 player: _myPlayer,
-                gameParams: _manager.Params);
+                gameParams: _manager.Params,
+                playerList: BuildPlayerList(),
+                inspectedPlayerId: _inspectedPlayerId,
+                viewedPlayer: _inspectedPlayerId.HasValue ? _manager.GetPlayer(_inspectedPlayerId.Value) : _myPlayer);
+
+            // Draw "Waiting" overlay when our combat is done but phase is still COMBAT
+            if (myCombatDone)
+            {
+                string waitMsg = "Waiting for other combats to finish...";
+                int fontSize = Math.Max(16, w / 40);
+                using var bgPaint = new SKPaint { Style = SKPaintStyle.Fill, Color = new SKColor(0, 0, 0, 140) };
+                using var textPaint = new SKPaint { Color = new SKColor(240, 240, 240), TextSize = fontSize, IsAntialias = true };
+                var textBounds = new SKRect();
+                textPaint.MeasureText(waitMsg, ref textBounds);
+                int pad = 12;
+                float bx = w / 2f - textBounds.Width / 2f - pad;
+                float by = h * 0.15f;
+                canvas.DrawRoundRect(new SKRect(bx, by, bx + textBounds.Width + pad * 2, by + textBounds.Height + pad * 2), 8, 8, bgPaint);
+                using var centeredPaint = new SKPaint { Color = new SKColor(240, 240, 240), TextSize = fontSize, IsAntialias = true, TextAlign = SKTextAlign.Center };
+                canvas.DrawText(waitMsg, w / 2f, by + pad + textBounds.Height, centeredPaint);
+            }
 
             // Copy pixels to WriteableBitmap for Avalonia display
             var skInfo = new SkiaSharp.SKImageInfo(w, h, SkiaSharp.SKColorType.Bgra8888, SkiaSharp.SKAlphaType.Premul);

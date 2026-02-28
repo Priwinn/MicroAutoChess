@@ -7,7 +7,7 @@ namespace MicroAutoChess.Core
         public int MaxRounds { get; set; } = 30;
         public int InitialPlayerHealth { get; set; } = 100;
         public int InitialPlayerGold { get; set; } = 5;
-        public int InitialPlayerLevel { get; set; } = 1;
+        public int InitialPlayerLevel { get; set; } = 3;
         public string BoardType { get; set; } = "hex";
         public (int Width, int Height) BoardSize { get; set; } = (7, 8);
         public int BenchSize { get; set; } = 9;
@@ -27,12 +27,19 @@ namespace MicroAutoChess.Core
         public int BuyXpAmount { get; set; } = 4;
         public int BaseCombatDamage { get; set; } = 2;
 
+        // Unit scaling
+        public double HealthScalingPerLevel { get; set; } = 0.5;
+        public double AttackScalingPerLevel { get; set; } = 0.3;
+        public double PreMitigationManaRate { get; set; } = 0.01;
+        public double PostMitigationManaRate { get; set; } = 0.07;
+        public double DefaultBasicAttackMana { get; set; } = 10.0;
+
         /// <summary>
         /// XP required to reach the next level, indexed by current level (1-based).
         /// E.g. XpPerLevel[1] = XP needed to go from level 1 → 2.
         /// Levels beyond the array length cannot be reached (max level).
         /// </summary>
-        public int[] XpPerLevel { get; set; } = new[] { 0, 2, 6, 10, 20, 32, 56, 68, 58,};
+        public int[] XpPerLevel { get; set; } = new[] { 0, 2, 4, 6, 10, 20, 32, 56, 68, 58};
         // index: 0(unused) 1→2  2→3  3→4  4→5  5→6  6→7  7→8  8→9
 
         public int MaxLevel => XpPerLevel.Length - 1;
@@ -40,6 +47,20 @@ namespace MicroAutoChess.Core
         // Timer durations (seconds)
         public double PreparationTimerSeconds { get; set; } = 30.0;
         public double CombatTimerSeconds { get; set; } = 60.0;
+
+        // Fixed rarity for each unit type
+        public Dictionary<UnitType, UnitRarity> UnitTypeRarities { get; set; } = new()
+        {
+            { UnitType.WARRIOR,  UnitRarity.COMMON },
+            { UnitType.ARCHER,   UnitRarity.COMMON },
+            { UnitType.MAGE,     UnitRarity.COMMON },
+            { UnitType.TANK,     UnitRarity.COMMON },
+            { UnitType.ASSASSIN, UnitRarity.COMMON },
+            { UnitType.LIGHTNING_MAGE, UnitRarity.UNCOMMON },
+            { UnitType.ICE_TANK, UnitRarity.UNCOMMON },
+            { UnitType.EARTH_TANK, UnitRarity.UNCOMMON },
+            { UnitType.FOREST_ARCHER, UnitRarity.UNCOMMON },
+        };
 
         // Shared unit bag pool sizes per rarity
         public Dictionary<UnitRarity, int> PoolSizes { get; set; } = new()
@@ -52,6 +73,7 @@ namespace MicroAutoChess.Core
         };
 
         // Level-based rarity roll probabilities (rows = player level 1-5+, cols = COMMON..LEGENDARY)
+        // Determines which rarity tier a shop slot can draw from each roll.
         public double[][] RarityProbabilities { get; set; } = new[]
         {
             new[] { 1.0,  0.0,  0.0,  0.0,  0.0  },  // Level 1
@@ -59,7 +81,6 @@ namespace MicroAutoChess.Core
             new[] { 0.5,  0.35, 0.13, 0.02, 0.0  },  // Level 3
             new[] { 0.4,  0.35, 0.2,  0.05, 0.0  },  // Level 4
             new[] { 0.3,  0.3,  0.25, 0.13, 0.02 },  // Level 5+
-
         };
     }
 }

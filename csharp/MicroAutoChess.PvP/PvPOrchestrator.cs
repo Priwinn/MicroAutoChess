@@ -47,7 +47,7 @@ namespace MicroAutoChess.PvPApp
             {
                 IGamePlayer player = config.type switch
                 {
-                    GamePlayerType.AI => new RandomAIPlayer(config.playerId),
+                    GamePlayerType.AI => new TwoTrickAIPlayer(config.playerId, forcedType1: UnitType.TANK, forcedType2: UnitType.MAGE),
                     GamePlayerType.Human => new HumanPlayer(config.playerId),
                     _ => throw new ArgumentException($"Unsupported player type: {config.type}")
                 };
@@ -79,7 +79,7 @@ namespace MicroAutoChess.PvPApp
             {
                 var window = new PlayerWindow(this, p.PlayerId);
                 _humanWindows.Add(window);
-                p.Window = window;
+                p.View = window;
 
                 if (first)
                 {

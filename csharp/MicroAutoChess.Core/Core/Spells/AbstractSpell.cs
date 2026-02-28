@@ -39,5 +39,18 @@ namespace MicroAutoChess.Core.Spells
         public virtual Dictionary<string, object?>? OnHitRenderCallback(Core.Unit source, Core.Board board) => null;
 
         public virtual void UpdateLevel(int newLevel) { }
+
+        /// <summary>Serialize spell state to a JSON-friendly dictionary of primitives.</summary>
+        public virtual Dictionary<string, object?> ToJson()
+        {
+            return new Dictionary<string, object?>
+            {
+                ["name"] = Name,
+                ["range"] = Range,
+                ["spell_delay"] = SpellDelay,
+                ["ranged"] = Ranged,
+                ["spell_power"] = SpellPower
+            };
+        }
     }
 }

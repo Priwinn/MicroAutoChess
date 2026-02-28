@@ -421,6 +421,14 @@ namespace MicroAutoChess.Core
             return positions;
         }
 
+        /// <summary>
+        /// Mirror a board position vertically (flips between TEAM_1 and TEAM_2 zones).
+        /// </summary>
+        public (int, int) MirrorPosition((int, int) pos)
+        {
+            return (Width - 1 - pos.Item1, Height - 1 - pos.Item2);
+        }
+
         public List<(int, int)> FindPath((int, int) start, (int, int) target)
         {
             var open = new PriorityQueue<(int, int), double>();
@@ -893,7 +901,10 @@ namespace MicroAutoChess.Core
                 UnitType.MAGE => "M",
                 UnitType.TANK => "T",
                 UnitType.ASSASSIN => "S",
-                UnitType.SUPPORT => "H",
+                UnitType.LIGHTNING_MAGE => "L",
+                UnitType.ICE_TANK => "I",
+                UnitType.EARTH_TANK => "E",
+                UnitType.FOREST_ARCHER => "F",
                 _ => "U",
             };
         }

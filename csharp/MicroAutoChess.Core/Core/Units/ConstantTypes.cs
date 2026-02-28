@@ -13,7 +13,10 @@ namespace MicroAutoChess.Core
         MAGE,
         TANK,
         ASSASSIN,
-        SUPPORT,
+        LIGHTNING_MAGE,
+        ICE_TANK,
+        EARTH_TANK,
+        FOREST_ARCHER,
         NONE
     }
 
@@ -58,5 +61,23 @@ namespace MicroAutoChess.Core
         MOVE_EXECUTED,
         STATUS_EFFECT_APPLIED,
         STATUS_EFFECT_REMOVED
+    }
+
+    public enum StatusEffectType
+    {
+        DOT,
+        STAT_BUFF,
+        SHIELD,
+        STUN
+    }
+
+    public enum StatType
+    {
+        ATTACK,
+        DEFENSE,
+        RESISTANCE,
+        ATTACK_SPEED,
+        SPELL_POWER,
+        HEALTH
     }
 }

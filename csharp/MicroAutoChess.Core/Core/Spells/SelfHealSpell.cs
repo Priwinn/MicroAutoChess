@@ -37,5 +37,12 @@ namespace MicroAutoChess.Core.Spells
         {
             HealAmount = 100.0 + (newLevel - 1) * 50.0;
         }
+
+        public override Dictionary<string, object?> ToJson()
+        {
+            var d = base.ToJson();
+            d["heal_amount"] = HealAmount;
+            return d;
+        }
     }
 }

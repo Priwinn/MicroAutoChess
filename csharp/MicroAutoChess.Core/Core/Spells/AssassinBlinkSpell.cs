@@ -85,5 +85,12 @@ namespace MicroAutoChess.Core.Spells
         {
             Damage = 100.0 + (newLevel - 1) * 50.0;
         }
+
+        public override Dictionary<string, object?> ToJson()
+        {
+            var d = base.ToJson();
+            d["damage"] = Damage;
+            return d;
+        }
     }
 }

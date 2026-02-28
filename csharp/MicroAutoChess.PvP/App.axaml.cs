@@ -22,6 +22,8 @@ namespace MicroAutoChess.PvPApp
                 {
                     (1, GamePlayerType.Human),
                     (2, GamePlayerType.AI),
+                    (3, GamePlayerType.AI),
+                    (4, GamePlayerType.AI),
                 };
 
                 var orchestrator = new PvPOrchestrator(playerConfigs, masterSeed: 123);

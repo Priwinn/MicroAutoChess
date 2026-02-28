@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using MicroAutoChess.Core.Spells;
+using MicroAutoChess.Core.Traits;
 
 namespace MicroAutoChess.Core
 {
@@ -52,12 +53,15 @@ namespace MicroAutoChess.Core
         private Random _rng;
         public int FrameNumber { get; private set; } = 0;
         public int MaxFrames { get; set; } = 2000;
-        public List<CombatEvent> CombatLog => GlobalLog.CombatLog;
+        public List<CombatEvent> CombatLog { get; } = new List<CombatEvent>();
 
         public ActionTiming ActionTiming { get; set; }
         public List<PlannedAction> ActionQueue { get; set; } = new List<PlannedAction>();
 
         public int? CombatSeed { get; private set; }
+
+        /// <summary>Trait summaries snapshotted at combat start (unaffected by unit deaths).</summary>
+        public Dictionary<Team, List<TraitSummary>> TraitSnapshots { get; private set; } = new();
 
         public CombatEngine(Board board, Player p1, Player p2, int? combatSeed = null, ActionTiming? actionTiming = null)
         {
@@ -69,12 +73,39 @@ namespace MicroAutoChess.Core
             ActionTiming = actionTiming ?? new ActionTiming();
             CombatLog.Clear();
             SetTeams();
+            ApplyTraitBonuses();
+            SnapshotTraits();
+            ResetUnitHealth();
         }
 
         public void SetTeams()
         {
-            foreach (var u in _player1.UnitsOnBoard.Values.Where(u => u != null)) u!.Team = Team.TEAM_1;
-            foreach (var u in _player2.UnitsOnBoard.Values.Where(u => u != null)) u!.Team = Team.TEAM_2;
+            foreach (var u in _player1.UnitsOnBoard.Values.Where(u => u != null)) { u!.Team = Team.TEAM_1; u.CombatLog = CombatLog; }
+            foreach (var u in _player2.UnitsOnBoard.Values.Where(u => u != null)) { u!.Team = Team.TEAM_2; u.CombatLog = CombatLog; }
+        }
+
+        private void ApplyTraitBonuses()
+        {
+            var team1Units = _player1.UnitsOnBoard.Values.Where(u => u != null).Select(u => u!);
+            var team2Units = _player2.UnitsOnBoard.Values.Where(u => u != null).Select(u => u!);
+            TraitManager.ApplyTraitBonuses(team1Units, Team.TEAM_1);
+            TraitManager.ApplyTraitBonuses(team2Units, Team.TEAM_2);
+        }
+
+        private void SnapshotTraits()
+        {
+            var team1Units = _player1.UnitsOnBoard.Values.Where(u => u != null).Select(u => u!);
+            var team2Units = _player2.UnitsOnBoard.Values.Where(u => u != null).Select(u => u!);
+            TraitSnapshots[Team.TEAM_1] = TraitManager.GetTraitSummary(team1Units);
+            TraitSnapshots[Team.TEAM_2] = TraitManager.GetTraitSummary(team2Units);
+        }
+
+        private void ResetUnitHealth()
+        {
+            foreach (var u in _player1.UnitsOnBoard.Values.Where(u => u != null))
+                u!.CurrentHealth = u.GetMaxHealth();
+            foreach (var u in _player2.UnitsOnBoard.Values.Where(u => u != null))
+                u!.CurrentHealth = u.GetMaxHealth();
         }
 
         public int SimulateCombat()
@@ -128,6 +159,7 @@ namespace MicroAutoChess.Core
             });
 
             ExecuteQueuedActions();
+            TickStatusEffects(allUnits);
             PlanActions(allUnits);
             CleanupDeadUnits(allUnits);
         }
@@ -147,6 +179,15 @@ namespace MicroAutoChess.Core
             if (moveActions.Any()) ExecuteMovesSimultaneously(moveActions);
         }
 
+        private void TickStatusEffects(List<Unit> allUnits)
+        {
+            foreach (var unit in allUnits)
+            {
+                if (unit.ActiveStatusEffects.Count > 0)
+                    unit.TickStatusEffects(FrameNumber);
+            }
+        }
+
         private void PlanActions(List<Unit> allUnits)
         {
             var positionConflicts = new Dictionary<(int, int), List<PlannedAction>>();
@@ -154,6 +195,7 @@ namespace MicroAutoChess.Core
             foreach (var unit in allUnits)
             {
                 if (!unit.IsAlive()) continue;
+                if (unit.IsStunned) continue;
                 bool hasPending = ActionQueue.Any(a => a.Unit.Id == unit.Id);
                 if (hasPending) continue;
 
@@ -303,8 +345,9 @@ namespace MicroAutoChess.Core
             foreach (var action in spells)
             {
                 if (!action.Unit.IsAlive() || action.Target == null || !action.Target.IsAlive()) continue;
-                action.Unit.BaseStats.Spell!.Execute(action.Unit, _board, FrameNumber, critRate: action.Unit.BaseStats.CritRate, critDmg: action.Unit.BaseStats.CritDmg, canCrit: action.Unit.SpellCrit, critRoll: _rng.NextDouble());
-                CombatLog.Add(new CombatEvent { FrameNumber = FrameNumber, Source = action.Unit, Target = action.Target, EventType = CombatEventType.SPELL_EXECUTED, SpellName = action.Unit.BaseStats.Spell!.Name, Description = $"{action.Unit.UnitType} casts a {action.Unit.BaseStats.Spell!.Name} spell (planned in frame {action.PlannedFrame})" });
+                var spellInstance = action.Unit.BaseStats.Spell!;
+                spellInstance.Execute(action.Unit, _board, FrameNumber, critRate: action.Unit.BaseStats.CritRate, critDmg: action.Unit.BaseStats.CritDmg, canCrit: action.Unit.SpellCrit, critRoll: _rng.NextDouble());
+                CombatLog.Add(new CombatEvent { FrameNumber = FrameNumber, Source = action.Unit, Target = action.Target, EventType = CombatEventType.SPELL_EXECUTED, SpellName = spellInstance.Name, SpellInstance = spellInstance, Description = $"{action.Unit.UnitType} casts a {spellInstance.Name} spell (planned in frame {action.PlannedFrame})" });
             }
         }
 

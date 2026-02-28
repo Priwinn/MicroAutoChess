@@ -51,5 +51,12 @@ namespace MicroAutoChess.Core.Spells
         {
             BuffAmount = 0.25 + (newLevel - 1) * 0.025;
         }
+
+        public override Dictionary<string, object?> ToJson()
+        {
+            var d = base.ToJson();
+            d["buff_amount"] = BuffAmount;
+            return d;
+        }
     }
 }

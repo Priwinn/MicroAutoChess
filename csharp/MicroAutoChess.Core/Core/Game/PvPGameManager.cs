@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Linq;
+using MicroAutoChess.Core.Traits;
 
 namespace MicroAutoChess.Core
 {
@@ -130,6 +131,7 @@ namespace MicroAutoChess.Core
         public bool IsPlayerAlive(int playerId) => _alivePlayers.Contains(playerId);
         public int AlivePlayerCount => _alivePlayers.Count;
         public IReadOnlyCollection<int> AlivePlayerIds => _alivePlayers;
+        public IReadOnlyCollection<int> AllPlayerIds => _players.Keys;
         public IReadOnlyList<int> EliminationOrder => _eliminationOrder.AsReadOnly();
         public int PlayerCount => _players.Count;
 
@@ -156,6 +158,22 @@ namespace MicroAutoChess.Core
             var pairing = _currentPairings?.FirstOrDefault(p => p.Player2Id == playerId);
             if (pairing != null && _combatEngines.ContainsKey(pairing.Player1Id))
                 return pairing.Player1Id;
+            return null;
+        }
+
+        /// <summary>
+        /// Get the combat result for a specific player in this round (if finished).
+        /// Returns: 1 = won, 2 = lost, 0 = draw, null = not finished / no combat.
+        /// </summary>
+        public int? GetCombatOutcomeForPlayer(int playerId)
+        {
+            foreach (var r in _lastRoundResults)
+            {
+                if (r.Player1Id == playerId)
+                    return r.Winner == 1 ? 1 : r.Winner == 2 ? 2 : 0;
+                if (r.Player2Id == playerId)
+                    return r.Winner == 2 ? 1 : r.Winner == 1 ? 2 : 0;
+            }
             return null;
         }
 
@@ -265,7 +283,18 @@ namespace MicroAutoChess.Core
                 bool team1Alive = board.GetUnitsByTeam(Team.TEAM_1).Any(u => u.IsAlive());
                 bool team2Alive = board.GetUnitsByTeam(Team.TEAM_2).Any(u => u.IsAlive());
                 if (!team1Alive || !team2Alive || engine.FrameNumber >= engine.MaxFrames)
+                {
+                    // Record result immediately when this combat finishes
+                    if (!_lastRoundResults.Any(r => r.Player1Id == pairing.Player1Id && r.Player2Id == pairing.Player2Id))
+                    {
+                        int result;
+                        if (team1Alive && !team2Alive) result = 1;
+                        else if (!team1Alive && team2Alive) result = 2;
+                        else result = 0;
+                        RecordCombatResult(pairing, engine, result);
+                    }
                     continue;
+                }
 
                 engine.ExecuteDelayedFrame();
 
@@ -274,6 +303,18 @@ namespace MicroAutoChess.Core
                 team2Alive = board.GetUnitsByTeam(Team.TEAM_2).Any(u => u.IsAlive());
                 if (team1Alive && team2Alive && engine.FrameNumber < engine.MaxFrames)
                     anyOngoing = true;
+                else
+                {
+                    // Record result immediately when this combat finishes
+                    if (!_lastRoundResults.Any(r => r.Player1Id == pairing.Player1Id && r.Player2Id == pairing.Player2Id))
+                    {
+                        int result;
+                        if (team1Alive && !team2Alive) result = 1;
+                        else if (!team1Alive && team2Alive) result = 2;
+                        else result = 0;
+                        RecordCombatResult(pairing, engine, result);
+                    }
+                }
             }
             return anyOngoing;
         }
@@ -351,26 +392,20 @@ namespace MicroAutoChess.Core
             else
                 FinalizeAllCombats();
 
-            // Apply damage to losers
+            // Damage was already applied in RecordCombatResult; handle eliminations
             foreach (var result in _lastRoundResults)
             {
                 int loserId = -1;
                 if (result.Winner == 1) loserId = result.Player2Id;
                 else if (result.Winner == 2) loserId = result.Player1Id;
-                // draw: no damage
 
-                if (loserId > 0 && _players.ContainsKey(loserId) && _alivePlayers.Contains(loserId))
+                if (loserId > 0 && _players.ContainsKey(loserId) && _alivePlayers.Contains(loserId)
+                    && !_players[loserId].IsAlive())
                 {
-                    _players[loserId].TakeDamage(result.DamageToLoser);
-                    _actionLog.Add($"[Round {CurrentRound}] Player {loserId} takes {result.DamageToLoser} damage (HP: {_players[loserId].Health})");
-
-                    if (!_players[loserId].IsAlive())
-                    {
-                        _alivePlayers.Remove(loserId);
-                        _eliminationOrder.Add(loserId);
-                        ReturnPlayerUnitsToBag(loserId);
-                        _actionLog.Add($"[Round {CurrentRound}] Player {loserId} eliminated!");
-                    }
+                    _alivePlayers.Remove(loserId);
+                    _eliminationOrder.Add(loserId);
+                    ReturnPlayerUnitsToBag(loserId);
+                    _actionLog.Add($"[Round {CurrentRound}] Player {loserId} eliminated!");
                 }
             }
 
@@ -597,6 +632,8 @@ namespace MicroAutoChess.Core
 
             int refund = unit.GetSellValue();
 
+            bool wasOnBoard = unit.Position.HasValue && unit.Position.Value.Item1 >= 0;
+
             if (unit.Position.HasValue && unit.Position.Value.Item1 >= 0)
             {
                 var board = _boards[action.PlayerId];
@@ -606,6 +643,9 @@ namespace MicroAutoChess.Core
             player.RemoveUnit(unit);
             player.Gold += refund;
             UnitBag.ReturnUnit(unit);
+
+            if (wasOnBoard)
+                TraitManager.RecalculateTraitBonuses(player);
 
             _actionLog.Add($"[Round {CurrentRound}] {action} (+{refund} gold)");
             return PlayerActionResult.Ok($"Sold {unit.UnitType} for {refund} gold");
@@ -643,6 +683,8 @@ namespace MicroAutoChess.Core
             bool moved = board.PlayerMoveUnit(action.FromPosition.Value, action.ToPosition.Value, player.team);
             if (!moved)
                 return PlayerActionResult.Fail("Move failed — invalid position or unit");
+
+            TraitManager.RecalculateTraitBonuses(player);
 
             _actionLog.Add($"[Round {CurrentRound}] {action}");
             return PlayerActionResult.Ok("Unit moved");
@@ -751,6 +793,8 @@ namespace MicroAutoChess.Core
 
             var combatTeam1 = new Player(team1Source.PlayerId, Team.TEAM_1, Params);
             var combatTeam2 = new Player(team2Source.PlayerId, Team.TEAM_2, Params);
+            combatTeam1.MaxUnitsOnBoard = team1Source.MaxUnitsOnBoard;
+            combatTeam2.MaxUnitsOnBoard = team2Source.MaxUnitsOnBoard;
 
             // Copy bench from real players so it renders during combat
             foreach (var kv in team1Source.Bench)
@@ -764,24 +808,32 @@ namespace MicroAutoChess.Core
             board.Players[Team.TEAM_1] = combatTeam1;
             board.Players[Team.TEAM_2] = combatTeam2;
 
-            // Clone TEAM_1 source's units — already in TEAM_1 zone (top half)
+            // Clone TEAM_1 source's units onto the TEAM_1 zone.
+            // If the source was originally TEAM_2, mirror positions into the TEAM_1 zone.
+            bool mirrorTeam1 = team1Source.team != Team.TEAM_1;
             foreach (var kv in team1Source.UnitsOnBoard)
             {
                 if (kv.Value == null) continue;
                 var clone = kv.Value.Clone();
                 clone.Team = Team.TEAM_1;
+                if (mirrorTeam1 && clone.Position.HasValue)
+                    clone.Position = board.MirrorPosition(clone.Position.Value);
                 clone.InitialPosition = clone.Position;
                 clone.RoundReset();
                 if (clone.Position.HasValue)
                     board.PlaceBoardUnit(clone, clone.Position.Value);
             }
 
-            // Clone TEAM_2 source's units — already in TEAM_2 zone (bottom half)
+            // Clone TEAM_2 source's units onto the TEAM_2 zone.
+            // If the source was originally TEAM_1, mirror positions into the TEAM_2 zone.
+            bool mirrorTeam2 = team2Source.team != Team.TEAM_2;
             foreach (var kv in team2Source.UnitsOnBoard)
             {
                 if (kv.Value == null) continue;
                 var clone = kv.Value.Clone();
                 clone.Team = Team.TEAM_2;
+                if (mirrorTeam2 && clone.Position.HasValue)
+                    clone.Position = board.MirrorPosition(clone.Position.Value);
                 clone.InitialPosition = clone.Position;
                 clone.RoundReset();
                 if (clone.Position.HasValue)
@@ -812,7 +864,7 @@ namespace MicroAutoChess.Core
 
             int damage = Params.BaseCombatDamage + survivingWinnerUnits;
 
-            _lastRoundResults.Add(new CombatResult
+            var combatResult = new CombatResult
             {
                 Player1Id = pairing.Player1Id,
                 Player2Id = pairing.Player2Id,
@@ -820,7 +872,19 @@ namespace MicroAutoChess.Core
                 DamageToLoser = damage,
                 SurvivingUnits = survivingWinnerUnits,
                 IsGhostMatch = pairing.IsGhostMatch
-            });
+            };
+            _lastRoundResults.Add(combatResult);
+
+            // Apply damage immediately so health updates as soon as the combat finishes
+            int loserId = -1;
+            if (combatResult.Winner == 1) loserId = combatResult.Player2Id;
+            else if (combatResult.Winner == 2) loserId = combatResult.Player1Id;
+
+            if (loserId > 0 && _players.ContainsKey(loserId) && _alivePlayers.Contains(loserId))
+            {
+                _players[loserId].TakeDamage(combatResult.DamageToLoser);
+                _actionLog.Add($"[Round {CurrentRound}] Player {loserId} takes {combatResult.DamageToLoser} damage (HP: {_players[loserId].Health})");
+            }
         }
 
         private void ResetPlayerBoardForNextRound(int playerId)
